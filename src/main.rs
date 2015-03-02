@@ -12,5 +12,5 @@ fn main() {
 		)
         .get_matches();
 
-    println!("Hello, world! {:?}", matches.value_of("output"));
+    println!("Hello, world! {:?}", matches.value_of("output").unwrap_or(&"nothing".to_string()));
 }

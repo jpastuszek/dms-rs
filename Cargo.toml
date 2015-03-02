@@ -3,3 +3,6 @@
 name = "1"
 version = "0.0.1"
 authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
+
+[dependencies]
+clap = "*"
