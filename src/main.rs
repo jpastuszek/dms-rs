@@ -1,3 +1,16 @@
+extern crate clap;
+use clap::{Arg, App};
+
 fn main() {
-    println!("Hello, world! 5");
+	let matches = App::new("MyApp")
+        .version("0.0")
+        .author("JP")
+        .about("Does awesome things")
+        .arg(Arg::new("output")
+			.help("Name")
+			.index(1)
+		)
+        .get_matches();
+
+    println!("Hello, world! {:?}", matches.value_of("output"));
 }
