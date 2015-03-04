@@ -6,3 +6,5 @@ authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
 
 [dependencies]
 clap = "*"
+log = "0.2"
+env_logger = "*"
