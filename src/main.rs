@@ -1,3 +1,4 @@
+#![feature(old_io)]
 extern crate clap;
 use clap::{Arg, App};
 
@@ -10,9 +11,9 @@ extern crate chrono;
 
 use nanomsg::{Socket, NanoResult, Protocol};
 
-use std::any::Any;
 use chrono::*;
 use std::ops::*;
+use std::old_io::*;
 
 struct RawDataPoint<V> {
 	location: String,
@@ -23,9 +24,9 @@ struct RawDataPoint<V> {
 }
 
 impl RawDataPoint<i32> {
-	fn to_msgpack(&self) -> Vec<u8> {
+	fn to_msgpack(&self) -> IoResult<Vec<u8>> {
 		let arr = vec![self.location.clone()];
-	  msgpack::Encoder::to_msgpack(&arr).ok().unwrap()
+	  msgpack::Encoder::to_msgpack(&arr)
 	}
 }
 
@@ -64,8 +65,15 @@ fn main() {
   };
 
   println!("Encoded: {:?}", data2.to_msgpack());
-  let dec: Vec<String> = msgpack::from_msgpack(data2.to_msgpack().as_mut_slice()).ok().unwrap();
-  println!("Decode: {}", dec[0]);
+  match data2.to_msgpack() {
+  		Ok(data2) => {
+				let dec: Vec<String> = msgpack::from_msgpack(&data2).ok().unwrap();
+				println!("Decode: {}", dec[0]);
+  		}
+  		Err(error) => {
+  			error!("Failed to encode data: {}", error)
+  		}
+  }
 
  // let mut socket = Socket::new(Protocol::Pull).unwrap();
 	//let mut endpoint = socket.bind("tcp://*:1112").unwrap();
