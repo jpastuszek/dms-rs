@@ -1,5 +1,6 @@
 #![feature(old_io)]
 extern crate clap;
+extern crate serialize;
 use clap::{Arg, App};
 
 #[macro_use]
@@ -14,19 +15,24 @@ use nanomsg::{Socket, NanoResult, Protocol};
 use chrono::*;
 use std::ops::*;
 use std::old_io::*;
+use std::collections::HashMap;
+use std::any::Any;
+use serialize::{Encodable, Decodable};
 
+
+#[derive(Encodable,Decodable,PartialEq,Debug)]
 struct RawDataPoint<V> {
 	location: String,
 	path: String,
 	component: String,
-	time_stamp: DateTime<UTC>,
+	//time_stamp: DateTime<UTC>,
 	value: V,
 }
 
 impl RawDataPoint<i32> {
 	fn to_msgpack(&self) -> IoResult<Vec<u8>> {
-		let arr = vec![self.location.clone()];
-	  msgpack::Encoder::to_msgpack(&arr)
+		//data.insert("time_stamp", self.time_stamp);
+	  msgpack::Encoder::to_msgpack(&self)
 	}
 }
 
@@ -52,7 +58,7 @@ fn main() {
   	location: "myhost".to_string(), 
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
-  	time_stamp: UTC::now(),
+  	//time_stamp: UTC::now(),
   	value: 0.3
   };
 
@@ -60,15 +66,15 @@ fn main() {
   	location: "myhost".to_string(), 
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
-  	time_stamp: UTC::now(),
+  	//time_stamp: UTC::now(),
   	value: 1
   };
 
   println!("Encoded: {:?}", data2.to_msgpack());
   match data2.to_msgpack() {
   		Ok(data2) => {
-				let dec: Vec<String> = msgpack::from_msgpack(&data2).ok().unwrap();
-				println!("Decode: {}", dec[0]);
+				let dec: RawDataPoint<i32> = msgpack::from_msgpack(&data2).ok().unwrap();
+				println!("Decode: {:?}", dec);
   		}
   		Err(error) => {
   			error!("Failed to encode data: {}", error)
