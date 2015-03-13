@@ -32,7 +32,7 @@ struct RawDataPoint<V> {
 	value: V,
 }
 
-impl Encodable for RawDataPoint<i32> {
+impl<V: Encodable> Encodable for RawDataPoint<V> {
 	fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
 		s.emit_map(4, |s| {
 			try!(s.emit_map_elt_key(0, |s| "location".encode(s)));
@@ -52,7 +52,11 @@ impl Encodable for RawDataPoint<i32> {
 	}
 }
 
-impl RawDataPoint<i32> {
+trait ToMsgPack {
+	fn to_msgpack(&self) -> IoResult<Vec<u8>>;
+}
+
+impl<V: Encodable> ToMsgPack for RawDataPoint<V> {
 	fn to_msgpack(&self) -> IoResult<Vec<u8>> {
 		//data.insert("time_stamp", self.time_stamp);
 	  msgpack::Encoder::to_msgpack(&self)
@@ -77,7 +81,7 @@ fn main() {
   let str = msgpack::Encoder::to_msgpack(&arr).ok().unwrap();
   println!("Encoded: {:?}", str);
 
-  let data = RawDataPoint {
+  let data1 = RawDataPoint {
   	location: "myhost".to_string(), 
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
@@ -92,6 +96,16 @@ fn main() {
   	//time_stamp: UTC::now(),
   	value: 1
   };
+
+  match data1.to_msgpack() {
+  		Ok(data2) => {
+				//let dec: RawDataPoint<i32> = msgpack::from_msgpack(&data2).ok().unwrap();
+				println!("Encoded: {:?}", data2);
+  		}
+  		Err(error) => {
+  			error!("Failed to encode data: {}", error)
+  		}
+  }
 
   match data2.to_msgpack() {
   		Ok(data2) => {
