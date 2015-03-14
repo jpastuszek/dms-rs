@@ -23,18 +23,26 @@ use std::old_io::*;
 extern crate core;
 use core::num::Float;
 
+#[derive(Debug)]
+enum DataValue {
+	Int(i64),
+	Float(f64),
+	//String(String),
+	//Bool(bool)
+}
+
 //#[derive(RustcEncodable,RustcDecodable,PartialEq,Debug)]
 //#[derive(Encodable,Decodable,PartialEq,Debug)]
 #[derive(Debug)]
-struct RawDataPoint<V> {
+struct RawDataPoint {
 	location: String,
 	path: String,
 	component: String,
 	time_stamp: DateTime<UTC>,
-	value: V,
+	value: DataValue,
 }
 
-impl<V: Encodable> Encodable for RawDataPoint<V> {
+impl Encodable for RawDataPoint {
 	fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
 		s.emit_map(5, |s| {
 			try!(s.emit_map_elt_key(0, |s| "location".encode(s)));
@@ -51,22 +59,29 @@ impl<V: Encodable> Encodable for RawDataPoint<V> {
 			try!(s.emit_map_elt_val(3, |s| time_stamp.encode(s)));
 
 			try!(s.emit_map_elt_key(4, |s| "value".encode(s)));
-			try!(s.emit_map_elt_val(4, |s| self.value.encode(s)));
+			match self.value {
+				DataValue::Int(value) => {
+					try!(s.emit_map_elt_val(4, |s| value.encode(s)));
+				},
+				DataValue::Float(value) => {
+					try!(s.emit_map_elt_val(4, |s| value.encode(s)));
+				}
+			}
 
 			Ok(())
 		})
 	}
 }
 
-impl Decodable for RawDataPoint<i32> {
-  fn decode<D: Decoder>(d: &mut D) -> Result<RawDataPoint<i32>, D::Error> {
+impl Decodable for RawDataPoint {
+  fn decode<D: Decoder>(d: &mut D) -> Result<RawDataPoint, D::Error> {
 		d.read_map(|d, len| {
 			let mut out = RawDataPoint {
 		  	location: "lll".to_string(), 
 		  	path: "ppp".to_string(), 
 		  	component: "cccc".to_string(), 
 		  	time_stamp: UTC::now(),
-		  	value: 666
+		  	value: DataValue::Int(666)
 			};
 
 			for i in 0..len {
@@ -95,7 +110,21 @@ impl Decodable for RawDataPoint<i32> {
 						}
 					}
 				} else if key == "value".to_string() {
-					out.value = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+					if d.read_map_elt_val(i,|d| { let val: Result<i64, D::Error> = Decodable::decode(d); val}).and_then(|val| 
+						Ok(out.value = DataValue::Int(val))
+					).is_ok() {
+						debug!("Found Int value");
+						continue;
+					}
+					// second call does not work :/
+					if d.read_map_elt_val(i,|d| { let val: Result<f64, D::Error> = Decodable::decode(d); val}).and_then(|val| 
+						Ok(out.value = DataValue::Float(val))
+					).is_ok() {
+						debug!("Found Float value");
+						continue;
+					}
+					error!("Unknown RawDataPoint value type");
+					return Err(d.error("Unknown RawDataPoint value type"));
 				} else {
 					// Note: we cannot continue decoding since we don't know what value type we can expect!
 					warn!("extra data with key '{}' while decoding RawDataPoint", key);
@@ -111,7 +140,7 @@ trait ToMsgPack {
 	fn to_msgpack(&self) -> IoResult<Vec<u8>>;
 }
 
-impl<V: Encodable> ToMsgPack for RawDataPoint<V> {
+impl ToMsgPack for RawDataPoint {
 	fn to_msgpack(&self) -> IoResult<Vec<u8>> {
 		//data.insert("time_stamp", self.time_stamp);
 	  msgpack::Encoder::to_msgpack(&self)
@@ -135,7 +164,7 @@ fn main() {
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
   	time_stamp: UTC::now(),
-  	value: 0.3
+  	value: DataValue::Float(0.3)
   };
 
   let data2 = RawDataPoint {
@@ -143,7 +172,7 @@ fn main() {
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
   	time_stamp: UTC::now(),
-  	value: 1
+  	value: DataValue::Int(1)
   };
 
   match data1.to_msgpack() {
@@ -156,10 +185,10 @@ fn main() {
   		}
   }
 
-  match data2.to_msgpack() {
-  		Ok(data2) => {
-				println!("Encoded: {:?}", data2);
-  			let r: Result<RawDataPoint<i32>, _> = msgpack::from_msgpack(&data2);
+  match data1.to_msgpack() {
+  		Ok(data) => {
+				println!("Encoded: {:?}", data);
+  			let r: Result<RawDataPoint, _> = msgpack::from_msgpack(&data);
 				match r {
 					Ok(dec) => {
 						println!("Decoded: {:?}", dec);
