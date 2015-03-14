@@ -12,18 +12,20 @@ extern crate nanomsg;
 extern crate chrono;
 extern crate serialize;
 //extern crate "rustc-serialize" as serialize;
-use serialize::{Encodable, Encoder, Decodable};
+use serialize::{Encodable, Encoder, Decodable, Decoder};
 
 use nanomsg::{Socket, NanoResult, Protocol};
 
 use chrono::*;
 use std::ops::*;
 use std::old_io::*;
-use std::collections::HashMap;
-use std::any::Any;
+
+extern crate core;
+use core::num::Float;
 
 //#[derive(RustcEncodable,RustcDecodable,PartialEq,Debug)]
 //#[derive(Encodable,Decodable,PartialEq,Debug)]
+#[derive(Debug)]
 struct RawDataPoint<V> {
 	location: String,
 	path: String,
@@ -56,6 +58,47 @@ impl<V: Encodable> Encodable for RawDataPoint<V> {
 	}
 }
 
+impl Decodable for RawDataPoint<i32> {
+  fn decode<D: Decoder>(d: &mut D) -> Result<RawDataPoint<i32>, D::Error> {
+		d.read_map(|d, len| {
+			let mut out = RawDataPoint {
+		  	location: "lll".to_string(), 
+		  	path: "ppp".to_string(), 
+		  	component: "cccc".to_string(), 
+		  	time_stamp: UTC::now(),
+		  	value: 666
+			};
+
+			for i in 0..len {
+				let key: String = try!(d.read_map_elt_key(i, |d| Decodable::decode(d)));
+				trace!("Found key: {}", key);
+
+				if key == "location".to_string() {
+					out.location = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+				} else if key == "path".to_string() {
+					out.path = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+				} else if key == "component".to_string() {
+					out.component = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+				} else if key == "time_stamp".to_string() {
+					let ts: f64 = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+
+					out.time_stamp = DateTime::from_utc(NaiveDateTime::from_timestamp(
+						ts.trunc() as i64,
+						(ts.fract() * 1_000_000_000f64) as u32
+					), UTC)
+				} else if key == "value".to_string() {
+					out.value = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
+				} else {
+					// Note: we cannot continue decoding since we don't know what value type we can expect!
+					warn!("extra data with key: '{}' while decoding RawDataPoint", key);
+					return Ok(out)
+				}
+			}
+			Ok(out)
+		})
+  }
+}
+
 trait ToMsgPack {
 	fn to_msgpack(&self) -> IoResult<Vec<u8>>;
 }
@@ -78,12 +121,6 @@ fn main() {
 			.help("Name")
 			.index(1)
 		).get_matches();
-
-	println!("Hello, world! {:?}", matches.value_of("output").unwrap_or(&"nothing".to_string()));
-
-  let arr = vec!["str1".to_string(), "str2".to_string()];
-  let str = msgpack::Encoder::to_msgpack(&arr).ok().unwrap();
-  println!("Encoded: {:?}", str);
 
   let data1 = RawDataPoint {
   	location: "myhost".to_string(), 
@@ -113,8 +150,16 @@ fn main() {
 
   match data2.to_msgpack() {
   		Ok(data2) => {
-				//let dec: RawDataPoint<i32> = msgpack::from_msgpack(&data2).ok().unwrap();
 				println!("Encoded: {:?}", data2);
+  			let r: Result<RawDataPoint<i32>, _> = msgpack::from_msgpack(&data2);
+				match r {
+					Ok(dec) => {
+						println!("Decoded: {:?}", dec);
+					}
+					Err(error) => {
+		  			error!("Failed to decode data: {}", error)
+					}
+				}
   		}
   		Err(error) => {
   			error!("Failed to encode data: {}", error)
