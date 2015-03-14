@@ -82,15 +82,23 @@ impl Decodable for RawDataPoint<i32> {
 				} else if key == "time_stamp".to_string() {
 					let ts: f64 = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
 
-					out.time_stamp = DateTime::from_utc(NaiveDateTime::from_timestamp(
+					match NaiveDateTime::from_timestamp_opt(
 						ts.trunc() as i64,
 						(ts.fract() * 1_000_000_000f64) as u32
-					), UTC)
+					) {
+						Some(date) => {
+							out.time_stamp = DateTime::from_utc(date, UTC)
+						}
+						None => {
+							error!("Cannot obtain DateTime from 'time_stamp' data or RawDataPoint");
+							return Err(d.error("Cannot obtain DateTime from 'time_stamp' data or RawDataPoint"));
+						}
+					}
 				} else if key == "value".to_string() {
 					out.value = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
 				} else {
 					// Note: we cannot continue decoding since we don't know what value type we can expect!
-					warn!("extra data with key: '{}' while decoding RawDataPoint", key);
+					warn!("extra data with key '{}' while decoding RawDataPoint", key);
 					return Ok(out)
 				}
 			}
