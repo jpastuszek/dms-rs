@@ -28,13 +28,13 @@ struct RawDataPoint<V> {
 	location: String,
 	path: String,
 	component: String,
-	//time_stamp: DateTime<UTC>,
+	time_stamp: DateTime<UTC>,
 	value: V,
 }
 
 impl<V: Encodable> Encodable for RawDataPoint<V> {
 	fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-		s.emit_map(4, |s| {
+		s.emit_map(5, |s| {
 			try!(s.emit_map_elt_key(0, |s| "location".encode(s)));
 			try!(s.emit_map_elt_val(0, |s| self.location.encode(s)));
 
@@ -44,7 +44,11 @@ impl<V: Encodable> Encodable for RawDataPoint<V> {
 			try!(s.emit_map_elt_key(2, |s| "component".encode(s)));
 			try!(s.emit_map_elt_val(2, |s| self.component.encode(s)));
 
-			try!(s.emit_map_elt_key(3, |s| "value".encode(s)));
+			let time_stamp = (self.time_stamp.timestamp() as f64) + (self.time_stamp.nanosecond() as f64 / 1_000_000_000f64);
+			try!(s.emit_map_elt_key(3, |s| "time_stamp".encode(s)));
+			try!(s.emit_map_elt_val(3, |s| time_stamp.encode(s)));
+
+			try!(s.emit_map_elt_key(4, |s| "value".encode(s)));
 			try!(s.emit_map_elt_val(4, |s| self.value.encode(s)));
 
 			Ok(())
@@ -85,7 +89,7 @@ fn main() {
   	location: "myhost".to_string(), 
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
-  	//time_stamp: UTC::now(),
+  	time_stamp: UTC::now(),
   	value: 0.3
   };
 
@@ -93,7 +97,7 @@ fn main() {
   	location: "myhost".to_string(), 
   	path: "sys/cpu/usage".to_string(), 
   	component: "user".to_string(), 
-  	//time_stamp: UTC::now(),
+  	time_stamp: UTC::now(),
   	value: 1
   };
 
