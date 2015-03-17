@@ -1,13 +1,27 @@
 [root]
-name = "1"
+name = "rdms-test"
 version = "0.0.1"
 dependencies = [
+ "capnp 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)",
+ "capnpc 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "msgpack 0.1.0 (git+https://github.com/mneumann/rust-msgpack.git)",
  "nanomsg 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "capnp"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "capnpc"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "capnp 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -46,11 +60,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "log"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-
-[[package]]
-name = "msgpack"
-version = "0.1.0"
-source = "git+https://github.com/mneumann/rust-msgpack.git#bbe3fb2c7aa1607df31a98c68c582efdaf14758c"
 
 [[package]]
 name = "nanomsg"

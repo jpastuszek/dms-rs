@@ -1,6 +1,5 @@
 [package]
-
-name = "1"
+name = "rdms-test"
 version = "0.0.1"
 authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
 
@@ -10,6 +9,5 @@ log = "0.2"
 env_logger = "*"
 nanomsg = "0.3.1"
 chrono = "0.2"
-
-[dependencies.msgpack]
-git = "https://github.com/mneumann/rust-msgpack.git"
+capnp = "*"
+capnpc = "*"

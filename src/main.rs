@@ -1,5 +1,4 @@
 #![feature(old_io)]
-#![feature(rustc_private)]
 extern crate clap;
 //extern crate serialize;
 use clap::{Arg, App};
@@ -7,12 +6,8 @@ use clap::{Arg, App};
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-extern crate msgpack;
 extern crate nanomsg;
 extern crate chrono;
-extern crate serialize;
-//extern crate "rustc-serialize" as serialize;
-use serialize::{Encodable, Encoder, Decodable, Decoder};
 
 use nanomsg::{Socket, NanoResult, Protocol};
 
@@ -20,130 +15,67 @@ use chrono::*;
 use std::ops::*;
 use std::old_io::*;
 
-extern crate core;
-use core::num::Float;
+extern crate capnp;
+extern crate capnpc;
+use capnp::serialize_packed;
+use capnp::{MessageBuilder, MallocMessageBuilder};
+
+mod raw_data_point_capnp {
+    include!("./schema/raw_data_point_capnp.rs");
+}
 
 #[derive(Debug)]
 enum DataValue {
-	Int(i64),
+	Integer(i64),
 	Float(f64),
-	//String(String),
-	//Bool(bool)
+	Bool(bool),
+	Text(String),
 }
 
-//#[derive(RustcEncodable,RustcDecodable,PartialEq,Debug)]
-//#[derive(Encodable,Decodable,PartialEq,Debug)]
-#[derive(Debug)]
-struct RawDataPoint {
-	location: String,
-	path: String,
-	component: String,
-	time_stamp: DateTime<UTC>,
-	value: DataValue,
+struct Collector<'a> {
+	timestamp: DateTime<UTC>,
+	messages: Vec<&'a MallocMessageBuilder>,
 }
 
-impl Encodable for RawDataPoint {
-	fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-		s.emit_map(5, |s| {
-			try!(s.emit_map_elt_key(0, |s| "location".encode(s)));
-			try!(s.emit_map_elt_val(0, |s| self.location.encode(s)));
+impl<'a> Collector<'a> {
+	fn new() -> Collector<'a> {
+		Collector {
+			timestamp: UTC::now(),
+			messages: Vec::new(),
+		}
+	}
 
-			try!(s.emit_map_elt_key(1, |s| "path".encode(s)));
-			try!(s.emit_map_elt_val(1, |s| self.path.encode(s)));
+	fn collect(&self, location: &str, path: &str, component: &str, value: DataValue) -> () {
+		let mut message = MallocMessageBuilder::new_default();
+		let mut raw_data_point = message.init_root::<raw_data_point_capnp::raw_data_point::Builder>();
 
-			try!(s.emit_map_elt_key(2, |s| "component".encode(s)));
-			try!(s.emit_map_elt_val(2, |s| self.component.encode(s)));
+		raw_data_point.set_location(location);
+		raw_data_point.set_path(path);
+		raw_data_point.set_component(component);
 
-			let time_stamp = (self.time_stamp.timestamp() as f64) + (self.time_stamp.nanosecond() as f64 / 1_000_000_000f64);
-			try!(s.emit_map_elt_key(3, |s| "time_stamp".encode(s)));
-			try!(s.emit_map_elt_val(3, |s| time_stamp.encode(s)));
+		{
+			let mut date_time = raw_data_point.borrow().init_timestamp();
+			date_time.set_unix_timestamp(self.timestamp.timestamp());
+			date_time.set_nanosecond(self.timestamp.nanosecond());
+		}
 
-			try!(s.emit_map_elt_key(4, |s| "value".encode(s)));
-			match self.value {
-				DataValue::Int(value) => {
-					try!(s.emit_map_elt_val(4, |s| value.encode(s)));
+		{
+			let mut _value = raw_data_point.borrow().init_value();
+			match value {
+				DataValue::Integer(value) => {
+					_value.set_integer(value);
 				},
 				DataValue::Float(value) => {
-					try!(s.emit_map_elt_val(4, |s| value.encode(s)));
-				}
+					_value.set_float(value);
+				},
+				DataValue::Bool(value) => {
+					_value.set_boolean(value);
+				},
+				DataValue::Text(value) => {
+					_value.set_text(value.as_slice());
+				},
 			}
-
-			Ok(())
-		})
-	}
-}
-
-impl Decodable for RawDataPoint {
-  fn decode<D: Decoder>(d: &mut D) -> Result<RawDataPoint, D::Error> {
-		d.read_map(|d, len| {
-			let mut out = RawDataPoint {
-		  	location: "lll".to_string(), 
-		  	path: "ppp".to_string(), 
-		  	component: "cccc".to_string(), 
-		  	time_stamp: UTC::now(),
-		  	value: DataValue::Int(666)
-			};
-
-			for i in 0..len {
-				let key: String = try!(d.read_map_elt_key(i, |d| Decodable::decode(d)));
-				trace!("Found key: {}", key);
-
-				if key == "location".to_string() {
-					out.location = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
-				} else if key == "path".to_string() {
-					out.path = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
-				} else if key == "component".to_string() {
-					out.component = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
-				} else if key == "time_stamp".to_string() {
-					let ts: f64 = try!(d.read_map_elt_val(i, |d| Decodable::decode(d)));
-
-					match NaiveDateTime::from_timestamp_opt(
-						ts.trunc() as i64,
-						(ts.fract() * 1_000_000_000f64) as u32
-					) {
-						Some(date) => {
-							out.time_stamp = DateTime::from_utc(date, UTC)
-						}
-						None => {
-							error!("Cannot obtain DateTime from 'time_stamp' data or RawDataPoint");
-							return Err(d.error("Cannot obtain DateTime from 'time_stamp' data or RawDataPoint"));
-						}
-					}
-				} else if key == "value".to_string() {
-					if d.read_map_elt_val(i,|d| { let val: Result<i64, D::Error> = Decodable::decode(d); val}).and_then(|val| 
-						Ok(out.value = DataValue::Int(val))
-					).is_ok() {
-						debug!("Found Int value");
-						continue;
-					}
-					// second call does not work :/
-					if d.read_map_elt_val(i,|d| { let val: Result<f64, D::Error> = Decodable::decode(d); val}).and_then(|val| 
-						Ok(out.value = DataValue::Float(val))
-					).is_ok() {
-						debug!("Found Float value");
-						continue;
-					}
-					error!("Unknown RawDataPoint value type");
-					return Err(d.error("Unknown RawDataPoint value type"));
-				} else {
-					// Note: we cannot continue decoding since we don't know what value type we can expect!
-					warn!("extra data with key '{}' while decoding RawDataPoint", key);
-					return Ok(out)
-				}
-			}
-			Ok(out)
-		})
-  }
-}
-
-trait ToMsgPack {
-	fn to_msgpack(&self) -> IoResult<Vec<u8>>;
-}
-
-impl ToMsgPack for RawDataPoint {
-	fn to_msgpack(&self) -> IoResult<Vec<u8>> {
-		//data.insert("time_stamp", self.time_stamp);
-	  msgpack::Encoder::to_msgpack(&self)
+		}
 	}
 }
 
@@ -159,59 +91,6 @@ fn main() {
 			.index(1)
 		).get_matches();
 
-  let data1 = RawDataPoint {
-  	location: "myhost".to_string(), 
-  	path: "sys/cpu/usage".to_string(), 
-  	component: "user".to_string(), 
-  	time_stamp: UTC::now(),
-  	value: DataValue::Float(0.3)
-  };
-
-  let data2 = RawDataPoint {
-  	location: "myhost".to_string(), 
-  	path: "sys/cpu/usage".to_string(), 
-  	component: "user".to_string(), 
-  	time_stamp: UTC::now(),
-  	value: DataValue::Int(1)
-  };
-
-  match data1.to_msgpack() {
-  		Ok(data2) => {
-				//let dec: RawDataPoint<i32> = msgpack::from_msgpack(&data2).ok().unwrap();
-				println!("Encoded: {:?}", data2);
-  		}
-  		Err(error) => {
-  			error!("Failed to encode data: {}", error)
-  		}
-  }
-
-  match data1.to_msgpack() {
-  		Ok(data) => {
-				println!("Encoded: {:?}", data);
-  			let r: Result<RawDataPoint, _> = msgpack::from_msgpack(&data);
-				match r {
-					Ok(dec) => {
-						println!("Decoded: {:?}", dec);
-					}
-					Err(error) => {
-		  			error!("Failed to decode data: {}", error)
-					}
-				}
-  		}
-  		Err(error) => {
-  			error!("Failed to encode data: {}", error)
-  		}
-  }
-
- // let mut socket = Socket::new(Protocol::Pull).unwrap();
-	//let mut endpoint = socket.bind("tcp://*:1112").unwrap();
-
- // let msg = socket.read_to_string().unwrap();
-  // /usr/local/Cellar/nanomsg/0.5-beta/bin/nanocat --verbose --connect-local 1112 --send-timeout 2 --data hello --push
-//	println!("We got a message: {}", &*msg);
+		let mut collector = Collector::new();
+		collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.2));
 }
-
-/*
-2.2.0 :008 > MessagePack.load [132, 168, 108, 111, 99, 97, 116, 105, 111, 110, 166, 109, 121, 104, 111, 115, 116, 164, 112, 97, 116, 104, 173, 115, 121, 115, 47, 99, 112, 117, 47, 117, 115, 97, 103, 101, 169, 99, 111, 109, 112, 111, 110, 101, 110, 116, 164, 117, 115, 101, 114, 165, 118, 97, 108, 117, 101, 208, 1].pack('c*')
- => {"location"=>"myhost", "path"=>"sys/cpu/usage", "component"=>"user", "value"=>1}
-*/
