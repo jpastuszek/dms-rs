@@ -9,7 +9,7 @@ extern crate env_logger;
 extern crate nanomsg;
 extern crate chrono;
 
-use nanomsg::{Socket, NanoResult, Protocol};
+//use nanomsg::{Socket, NanoResult, Protocol};
 
 use chrono::*;
 use std::ops::*;
@@ -20,11 +20,13 @@ extern crate capnpc;
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder};
 
+#[allow(dead_code)]
 mod raw_data_point_capnp {
     include!("./schema/raw_data_point_capnp.rs");
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum DataValue {
 	Integer(i64),
 	Float(f64),
@@ -72,7 +74,7 @@ impl<'a> Collector<'a> {
 					_value.set_boolean(value);
 				},
 				DataValue::Text(value) => {
-					_value.set_text(value.as_slice());
+					_value.set_text(&*value);
 				},
 			}
 		}
