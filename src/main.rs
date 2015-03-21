@@ -1,4 +1,4 @@
-#![feature(old_io)]
+#![feature(io)]
 extern crate clap;
 //extern crate serialize;
 use clap::{Arg, App};
@@ -13,12 +13,13 @@ extern crate chrono;
 
 use chrono::*;
 use std::ops::*;
-use std::old_io::*;
+use std::io::*;
 
 extern crate capnp;
 extern crate capnpc;
 use capnp::serialize_packed;
-use capnp::{MessageBuilder, MallocMessageBuilder};
+use capnp::{MessageBuilder, MallocMessageBuilder, };
+use capnp::io::WriteOutputStream;
 
 #[allow(dead_code)]
 mod raw_data_point_capnp {
@@ -34,50 +35,54 @@ enum DataValue {
 	Text(String),
 }
 
-struct Collector<'a> {
+struct Collector {
 	timestamp: DateTime<UTC>,
-	messages: Vec<&'a MallocMessageBuilder>,
+	messages: Vec<Box<MallocMessageBuilder>>,
 }
 
-impl<'a> Collector<'a> {
-	fn new() -> Collector<'a> {
+impl Collector {
+	fn new() -> Collector {
 		Collector {
 			timestamp: UTC::now(),
 			messages: Vec::new(),
 		}
 	}
 
-	fn collect(&self, location: &str, path: &str, component: &str, value: DataValue) -> () {
-		let mut message = MallocMessageBuilder::new_default();
-		let mut raw_data_point = message.init_root::<raw_data_point_capnp::raw_data_point::Builder>();
-
-		raw_data_point.set_location(location);
-		raw_data_point.set_path(path);
-		raw_data_point.set_component(component);
-
+	fn collect(& mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
+		let mut message = Box::new(MallocMessageBuilder::new_default());
 		{
-			let mut date_time = raw_data_point.borrow().init_timestamp();
-			date_time.set_unix_timestamp(self.timestamp.timestamp());
-			date_time.set_nanosecond(self.timestamp.nanosecond());
-		}
+			let mut raw_data_point = message.init_root::<raw_data_point_capnp::raw_data_point::Builder>();
 
-		{
-			let mut _value = raw_data_point.borrow().init_value();
-			match value {
-				DataValue::Integer(value) => {
-					_value.set_integer(value);
-				},
-				DataValue::Float(value) => {
-					_value.set_float(value);
-				},
-				DataValue::Bool(value) => {
-					_value.set_boolean(value);
-				},
-				DataValue::Text(value) => {
-					_value.set_text(&*value);
-				},
+			raw_data_point.set_location(location);
+			raw_data_point.set_path(path);
+			raw_data_point.set_component(component);
+
+			{
+				let mut date_time = raw_data_point.borrow().init_timestamp();
+				date_time.set_unix_timestamp(self.timestamp.timestamp());
+				date_time.set_nanosecond(self.timestamp.nanosecond());
+			}
+
+			{
+				let mut _value = raw_data_point.borrow().init_value();
+				match value {
+					DataValue::Integer(value) => {
+						_value.set_integer(value);
+					},
+					DataValue::Float(value) => {
+						_value.set_float(value);
+					},
+					DataValue::Bool(value) => {
+						_value.set_boolean(value);
+					},
+					DataValue::Text(value) => {
+						_value.set_text(&*value);
+					},
+				}
 			}
 		}
+
+		self.messages.push(message);
 	}
 }
 
@@ -95,4 +100,18 @@ fn main() {
 
 		let mut collector = Collector::new();
 		collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.2));
+
+		let mut out = WriteOutputStream::new(stdout());
+
+		// using pop so I can mutete the value (which is required for write_packed_message_unbuffered)
+		loop {
+			match collector.messages.pop()  {
+				Some(mut message) => {
+					serialize_packed::write_packed_message_unbuffered(&mut out, message.deref_mut()).ok().unwrap();
+				}
+				None => {
+					break;
+				}
+			}
+		}
 }
