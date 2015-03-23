@@ -1,4 +1,5 @@
 #![feature(io)]
+#![feature(collections)]
 extern crate clap;
 //extern crate serialize;
 use clap::{Arg, App};
@@ -103,15 +104,7 @@ fn main() {
 
 		let mut out = WriteOutputStream::new(stdout());
 
-		// using pop so I can mutete the value (which is required for write_packed_message_unbuffered)
-		loop {
-			match collector.messages.pop()  {
-				Some(mut message) => {
-					serialize_packed::write_packed_message_unbuffered(&mut out, message.deref_mut()).ok().unwrap();
-				}
-				None => {
-					break;
-				}
-			}
+		for mut message in collector.messages.drain() {
+			serialize_packed::write_packed_message_unbuffered(&mut out, message.deref_mut()).ok().unwrap();
 		}
 }
