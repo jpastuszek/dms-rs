@@ -23,7 +23,7 @@ mod collector;
 fn main() {
 	env_logger::init().unwrap();
 
-	let matches = App::new("MyApp")
+	let _ = App::new("MyApp")
 		.version("0.0")
 		.author("JP")
 		.about("Does awesome things")

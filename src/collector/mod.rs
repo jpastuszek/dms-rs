@@ -12,7 +12,7 @@ use std::thread::JoinGuard;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 #[allow(dead_code)]
 pub enum DataValue {
     Integer(i64),
@@ -112,18 +112,18 @@ pub struct Collector {
 }
 
 impl Collector {
-    pub fn collect(& mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
+    pub fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
         let raw_data_point = Box::new(RawDataPoint {
             location: location.to_string(),
             path: path.to_string(),
             component: component.to_string(),
             timestamp: self.timestamp,
-            value: value
+            value: value.clone()
         });
 
         match self.sink.send(raw_data_point) {
             Ok(_) => {
-                debug!("Collected raw data point for location: '{}', path: '{}', component: '{}'", location, path, component);
+                debug!("Collected raw data point for location: '{}', path: '{}', component: '{}', value: {:?}", location, path, component, value);
             }
             Err(error) => {
                 error!("Failed to send collected raw data point: {}", error);
@@ -135,7 +135,7 @@ impl Collector {
 describe! collector_thread {
     it "should shut down after going out of scope" {
         {
-            let collector_thread = CollectorThread::spawn();
+            let _ = CollectorThread::spawn();
         }
         assert!(true);
     }
