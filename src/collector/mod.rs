@@ -130,12 +130,8 @@ impl Collector {
     }
 }
 
-#[cfg(test)]
-mod collector_thread {
-    use super::*;
-
-    #[test]
-    fn should_shut_down_after_going_out_of_scope() {
+describe! collector_thread {
+    it "should shut down after going out of scope" {
         debug!("Starting collector");
         {
             let collector_thread = CollectorThread::spawn();
@@ -143,11 +139,8 @@ mod collector_thread {
         assert!(true);
     }
 
-    #[cfg(test)]
-    mod collector {
-        use super::super::*;
-        #[test]
-        fn should_allow_passing_data_points_to_collector_thread() {
+    describe! collector {
+         it "should allow passing data points to collector threa" {
             //assert_eq!(4, add_two(2));
 
             let collector_thread = CollectorThread::spawn();

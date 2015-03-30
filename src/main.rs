@@ -1,6 +1,7 @@
 #![feature(io)]
+#![feature(plugin)]
+#![plugin(stainless)]
 extern crate clap;
-//extern crate serialize;
 use clap::{Arg, App};
 
 #[macro_use]
