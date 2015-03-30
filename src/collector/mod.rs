@@ -34,6 +34,8 @@ struct RawDataPoint {
 pub struct CollectorThread<'a> {
     // NOTE: this needs to be before thread so channel is dropped before we join tread
     sink: SyncSender<Box<RawDataPoint>>,
+    // NOTE: this is actually needed to join the thread after SyncSender is closed
+    #[allow(dead_code)]
     thread: JoinGuard<'a, ()>,
 }
 
@@ -83,7 +85,7 @@ impl<'a> CollectorThread<'a> {
                         serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
                     },
                     Err(error) => {
-                        info!("Collector thread shutting down: {}", error);
+                        info!("Collector thread finished: {}", error);
                         return ();
                     }
                 }
@@ -121,10 +123,10 @@ impl Collector {
 
         match self.sink.send(raw_data_point) {
             Ok(_) => {
-                debug!("Collected RawDataPoint for location: {}, path: {}, component: {}", location, path, component);
+                debug!("Collected raw data point for location: '{}', path: '{}', component: '{}'", location, path, component);
             }
             Err(error) => {
-                error!("Failed to send collected RawDataPoint: {}", error);
+                error!("Failed to send collected raw data point: {}", error);
             }
         }
     }
@@ -132,7 +134,6 @@ impl Collector {
 
 describe! collector_thread {
     it "should shut down after going out of scope" {
-        debug!("Starting collector");
         {
             let collector_thread = CollectorThread::spawn();
         }
@@ -141,8 +142,6 @@ describe! collector_thread {
 
     describe! collector {
          it "should allow passing data points to collector threa" {
-            //assert_eq!(4, add_two(2));
-
             let collector_thread = CollectorThread::spawn();
 
             let mut collector = collector_thread.new_collector();
