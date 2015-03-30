@@ -1,5 +1,4 @@
 #![feature(io)]
-#![feature(collections)]
 extern crate clap;
 //extern crate serialize;
 use clap::{Arg, App};

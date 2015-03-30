@@ -1,12 +1,10 @@
 //use nanomsg::{Socket, NanoResult, Protocol};
-
 use chrono::*;
 
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder};
 use capnp::io::WriteOutputStream;
 
-use std::ops::*;
 use std::io::*;
 
 use std::thread;
@@ -23,6 +21,7 @@ pub enum DataValue {
     Text(String),
 }
 
+#[derive(Debug)]
 struct RawDataPoint {
     location: String,
     path: String,
@@ -33,8 +32,9 @@ struct RawDataPoint {
 
 
 pub struct CollectorThread<'a> {
-    thread: JoinGuard<'a, ()>,
+    // NOTE: this needs to be before thread so channel is dropped before we join tread
     sink: SyncSender<Box<RawDataPoint>>,
+    thread: JoinGuard<'a, ()>,
 }
 
 impl<'a> CollectorThread<'a> {
@@ -42,47 +42,50 @@ impl<'a> CollectorThread<'a> {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let thread = thread::scoped(move || {
-            match rx.recv() {
-                Ok(raw_data_point) => {
-                    let mut message = MallocMessageBuilder::new_default();
-                    {
-                        let mut raw_data_point_builder = message.init_root::<super::raw_data_point_capnp::raw_data_point::Builder>();
-
-                        raw_data_point_builder.set_location(&*raw_data_point.location);
-                        raw_data_point_builder.set_path(&*raw_data_point.path);
-                        raw_data_point_builder.set_component(&*raw_data_point.component);
-
+            loop {
+                match rx.recv() {
+                    Ok(raw_data_point) => {
+                        let mut message = MallocMessageBuilder::new_default();
                         {
-                            let mut date_time_builder = raw_data_point_builder.borrow().init_timestamp();
-                            date_time_builder.set_unix_timestamp(raw_data_point.timestamp.timestamp());
-                            date_time_builder.set_nanosecond(raw_data_point.timestamp.nanosecond());
-                        }
+                            let mut raw_data_point_builder = message.init_root::<super::raw_data_point_capnp::raw_data_point::Builder>();
 
-                        {
-                            let mut _value = raw_data_point_builder.borrow().init_value();
-                            match raw_data_point.value {
-                                DataValue::Integer(value) => {
-                                    _value.set_integer(value);
-                                },
-                                DataValue::Float(value) => {
-                                    _value.set_float(value);
-                                },
-                                DataValue::Bool(value) => {
-                                    _value.set_boolean(value);
-                                },
-                                DataValue::Text(value) => {
-                                    _value.set_text(&*value);
-                                },
+                            raw_data_point_builder.set_location(&*raw_data_point.location);
+                            raw_data_point_builder.set_path(&*raw_data_point.path);
+                            raw_data_point_builder.set_component(&*raw_data_point.component);
+
+                            {
+                                let mut date_time_builder = raw_data_point_builder.borrow().init_timestamp();
+                                date_time_builder.set_unix_timestamp(raw_data_point.timestamp.timestamp());
+                                date_time_builder.set_nanosecond(raw_data_point.timestamp.nanosecond());
+                            }
+
+                            {
+                                let mut _value = raw_data_point_builder.borrow().init_value();
+                                match raw_data_point.value {
+                                    DataValue::Integer(value) => {
+                                        _value.set_integer(value);
+                                    },
+                                    DataValue::Float(value) => {
+                                        _value.set_float(value);
+                                    },
+                                    DataValue::Bool(value) => {
+                                        _value.set_boolean(value);
+                                    },
+                                    DataValue::Text(value) => {
+                                        _value.set_text(&*value);
+                                    },
+                                }
                             }
                         }
+
+                        let mut out = WriteOutputStream::new(stdout());
+
+                        serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
+                    },
+                    Err(error) => {
+                        info!("Collector thread shutting down: {}", error);
+                        return ();
                     }
-
-                    let mut out = WriteOutputStream::new(stdout());
-
-                    serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
-                },
-                Err(error) => {
-                    // TODO
                 }
             }
         });
@@ -116,7 +119,40 @@ impl Collector {
             value: value
         });
 
-        self.sink.send(raw_data_point);
+        match self.sink.send(raw_data_point) {
+            Ok(_) => {
+                debug!("Collected RawDataPoint for location: {}, path: {}, component: {}", location, path, component);
+            }
+            Err(error) => {
+                error!("Failed to send collected RawDataPoint: {}", error);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutting_down_collecto_thread() {
+        debug!("Starting collector");
+        {
+            let collector_thread = CollectorThread::spawn();
+        }
+        assert!(true);
+    }
+
+    #[test]
+    fn collector_thread_provides_collector_that_allows_passing_data() {
+        //assert_eq!(4, add_two(2));
+
+        let collector_thread = CollectorThread::spawn();
+
+        let mut collector = collector_thread.new_collector();
+
+        collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+        collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
     }
 }
 
