@@ -131,11 +131,11 @@ impl Collector {
 }
 
 #[cfg(test)]
-mod tests {
+mod collector_thread {
     use super::*;
 
     #[test]
-    fn shutting_down_collecto_thread() {
+    fn should_shut_down_after_going_out_of_scope() {
         debug!("Starting collector");
         {
             let collector_thread = CollectorThread::spawn();
@@ -143,16 +143,20 @@ mod tests {
         assert!(true);
     }
 
-    #[test]
-    fn collector_thread_provides_collector_that_allows_passing_data() {
-        //assert_eq!(4, add_two(2));
+    #[cfg(test)]
+    mod collector {
+        use super::super::*;
+        #[test]
+        fn should_allow_passing_data_points_to_collector_thread() {
+            //assert_eq!(4, add_two(2));
 
-        let collector_thread = CollectorThread::spawn();
+            let collector_thread = CollectorThread::spawn();
 
-        let mut collector = collector_thread.new_collector();
+            let mut collector = collector_thread.new_collector();
 
-        collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-        collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+            collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+            collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+        }
     }
 }
 
