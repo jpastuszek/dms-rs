@@ -1,5 +1,8 @@
 use nanomsg::{Socket, NanoResult, Protocol};
+use capnp::serialize_packed;
 use capnp::{MallocMessageBuilder};
+use capnp::io::ArrayOutputStream;
+use std::io::Write;
 
 pub struct MessageHeader {
     data_type: String,
@@ -15,22 +18,41 @@ impl MessageHeader {
 }
 
 trait SendMessage {
-    fn send_message(&mut self, MessageHeader, MallocMessageBuilder);
+    fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder);
 }
 
 impl SendMessage for Socket {
-    fn send_message(&mut self, header: MessageHeader, data: MallocMessageBuilder) {
-        self.write(&header.to_bytes());
+    fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) {
+        let mut data: Vec<u8> = header.to_bytes();
+
+        let mut buff: Vec<u8> = Vec::with_capacity(1024);
+        buff.resize(1024, 42);
+
+        {
+            let mut os = ArrayOutputStream::new(buff.as_mut_slice());
+            serialize_packed::write_packed_message_unbuffered(&mut os, message).ok().unwrap();
+        }
+
+        println!("write");
+        data.extend(buff);
+        self.write(&data);
+        println!("write done");
     }
 }
 
-describe! nanomsg_socket_extension {
+describe! nanomsg_socket_extensions {
     before_each {
         use nanomsg::{Socket, NanoResult, Protocol};
-        use capnp::{MallocMessageBuilder};
+        use capnp::{MessageBuilder, MallocMessageBuilder};
         use messaging::SendMessage;
-        use std::thread;
+        use std::*;
         use std::thread::JoinGuard;
+        use chrono::*;
+
+        #[allow(dead_code)]
+        mod raw_data_point_capnp {
+            include!("./schema/raw_data_point_capnp.rs");
+        }
 
         let mut pull = Socket::new(Protocol::Pull).unwrap();
         let pull_endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
@@ -49,19 +71,20 @@ describe! nanomsg_socket_extension {
             };
 
             let mut message = MallocMessageBuilder::new_default();
+            {
+                let timestamp = UTC::now();
+                let mut date_time_builder = message.init_root::<raw_data_point_capnp::date_time::Builder>();
+                date_time_builder.set_unix_timestamp(timestamp.timestamp());
+                date_time_builder.set_nanosecond(timestamp.nanosecond());
+            }
 
-            println!("sending");
-            socket.send_message(header, message);
-            println!("sent");
+            socket.send_message(header, &mut message);
         });
 
-        println!("reading");
         match pull.read_to_end() {
             Ok(msg) => println!("{:?}", msg),
-            Err(error) => println!("got error: {}", error)
+            Err(error) => panic!("got error: {}", error)
         }
-        println!("read");
-        thread.join();
     }
 }
 
