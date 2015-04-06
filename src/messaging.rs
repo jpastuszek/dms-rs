@@ -1,8 +1,9 @@
 use nanomsg::{Socket, NanoResult, Protocol};
 use capnp::serialize_packed;
 use capnp::{MallocMessageBuilder};
-use capnp::io::ArrayOutputStream;
+use capnp::io::OutputStream;
 use std::io::Write;
+use std::io::Result;
 
 pub struct MessageHeader {
     data_type: String,
@@ -17,6 +18,19 @@ impl MessageHeader {
     }
 }
 
+struct MsgBuf {
+    out: Vec<u8>
+}
+
+impl OutputStream for MsgBuf {
+    fn write(&mut self, buf: &[u8]) -> Result<()> {
+        self.out.push_all(buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<()> { Ok(()) }
+}
+
 trait SendMessage {
     fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder);
 }
@@ -24,17 +38,14 @@ trait SendMessage {
 impl SendMessage for Socket {
     fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) {
         let mut data: Vec<u8> = header.to_bytes();
-
-        let mut buff: Vec<u8> = Vec::with_capacity(1024);
-        buff.resize(1024, 42);
+        let mut buf = MsgBuf { out: Vec::new() };
 
         {
-            let mut os = ArrayOutputStream::new(buff.as_mut_slice());
-            serialize_packed::write_packed_message_unbuffered(&mut os, message).ok().unwrap();
+            serialize_packed::write_packed_message_unbuffered(&mut buf, message).ok().unwrap();
         }
 
         println!("write");
-        data.extend(buff);
+        data.extend(buf.out);
         self.write(&data);
         println!("write done");
     }
