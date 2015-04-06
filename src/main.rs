@@ -19,6 +19,7 @@ mod raw_data_point_capnp {
 }
 
 mod collector;
+mod messaging;
 
 fn main() {
 	env_logger::init().unwrap();
@@ -32,7 +33,7 @@ fn main() {
 			.index(1)
 		).get_matches();
 
-    let collector_thread = collector::CollectorThread::spawn();
+    let collector_thread = collector::CollectorThread::spawn("ipc:///tmp/rdms_data_store.ipc");
 
     let mut collector = collector_thread.new_collector();
 
