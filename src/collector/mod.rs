@@ -1,4 +1,4 @@
-//use nanomsg::{Socket, NanoResult, Protocol};
+use nanomsg::{Socket, NanoResult, Protocol};
 use chrono::*;
 
 use capnp::serialize_packed;
@@ -30,7 +30,6 @@ struct RawDataPoint {
     value: DataValue,
 }
 
-
 pub struct CollectorThread<'a> {
     // NOTE: this needs to be before thread so channel is dropped before we join tread
     sink: SyncSender<Box<RawDataPoint>>,
@@ -40,10 +39,16 @@ pub struct CollectorThread<'a> {
 }
 
 impl<'a> CollectorThread<'a> {
-    pub fn spawn() -> CollectorThread<'a> {
+    pub fn spawn(data_processor_address: &'a str) -> CollectorThread<'a> {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let thread = thread::scoped(move || {
+            let mut socket = Socket::new(Protocol::Push).ok().expect("Cannot create push socket!");
+            let endpoint = match socket.connect(data_processor_address) {
+                Ok(ep) => ep,
+                Err(error) => panic!("Failed to connect data processor at '{}': {}", data_processor_address, error)
+            };
+
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
@@ -80,9 +85,10 @@ impl<'a> CollectorThread<'a> {
                             }
                         }
 
-                        let mut out = WriteOutputStream::new(stdout());
+                        //let mut out = WriteOutputStream::new(socket);
 
-                        serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
+                        //socket.write_all(b"test").unwrap();
+                        //serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
                     },
                     Err(error) => {
                         info!("Collector thread finished: {}", error);
@@ -135,14 +141,14 @@ impl Collector {
 describe! collector_thread {
     it "should shut down after going out of scope" {
         {
-            let _ = CollectorThread::spawn();
+            let _ = CollectorThread::spawn("ipc:///tmp/test.ipc");
         }
         assert!(true);
     }
 
     describe! collector {
-         it "should allow passing data points to collector threa" {
-            let collector_thread = CollectorThread::spawn();
+         it "should pass data points to nanosmg pull socket" {
+            let collector_thread = CollectorThread::spawn("ipc:///tmp/test.ipc");
 
             let mut collector = collector_thread.new_collector();
 
