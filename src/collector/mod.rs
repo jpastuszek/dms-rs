@@ -1,9 +1,8 @@
-use nanomsg::{Socket, NanoResult, Protocol};
+use nanomsg::{Socket, Protocol};
 use chrono::*;
 
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder};
-use capnp::io::WriteOutputStream;
 
 use std::io::*;
 
@@ -84,11 +83,7 @@ impl<'a> CollectorThread<'a> {
                                 }
                             }
                         }
-
-                        //let mut out = WriteOutputStream::new(socket);
-
-                        //socket.write_all(b"test").unwrap();
-                        //serialize_packed::write_packed_message_unbuffered(&mut out, &mut message).ok().unwrap();
+                        // write output
                     },
                     Err(error) => {
                         info!("Collector thread finished: {}", error);

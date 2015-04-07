@@ -5,10 +5,11 @@ authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
 
 [dependencies]
 clap = "*"
-log = "0.2"
+log = "*"
 env_logger = "*"
-nanomsg = "0.3.1"
-chrono = "0.2"
+nanomsg = "*"
+chrono = "*"
 capnp = "*"
 capnpc = "*"
 stainless = "*"
+

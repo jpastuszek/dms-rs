@@ -11,7 +11,7 @@ pub mod date_time {
   use capnp::traits::{FromStructBuilder, FromStructReader};
   use capnp::{primitive_list, enum_list, struct_list, text_list, data_list, list_list};
 
-  #[derive(Copy)]
+  #[derive(Clone, Copy)]
   pub struct Reader<'a> { reader : layout::StructReader<'a> }
 
   impl <'a> ::capnp::traits::HasTypeId for Reader<'a> {
@@ -26,7 +26,7 @@ pub mod date_time {
 
   impl <'a> ::capnp::traits::FromPointerReader<'a> for Reader<'a> {
     fn get_from_pointer(reader: &::capnp::private::layout::PointerReader<'a>) -> Result<Reader<'a>> {
-      Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
+      ::std::result::Result::Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
     }
   }
 
@@ -72,7 +72,7 @@ pub mod date_time {
       ::capnp::traits::FromStructBuilder::new(builder.init_struct(_private::STRUCT_SIZE))
     }
     fn get_from_pointer(builder: ::capnp::private::layout::PointerBuilder<'a>) -> Result<Builder<'a>> {
-      Ok(::capnp::traits::FromStructBuilder::new(try!(builder.get_struct(_private::STRUCT_SIZE, ::std::ptr::null()))))
+      ::std::result::Result::Ok(::capnp::traits::FromStructBuilder::new(try!(builder.get_struct(_private::STRUCT_SIZE, ::std::ptr::null()))))
     }
   }
 
@@ -136,7 +136,7 @@ pub mod raw_data_point {
   use capnp::traits::{FromStructBuilder, FromStructReader};
   use capnp::{primitive_list, enum_list, struct_list, text_list, data_list, list_list};
 
-  #[derive(Copy)]
+  #[derive(Clone, Copy)]
   pub struct Reader<'a> { reader : layout::StructReader<'a> }
 
   impl <'a> ::capnp::traits::HasTypeId for Reader<'a> {
@@ -151,7 +151,7 @@ pub mod raw_data_point {
 
   impl <'a> ::capnp::traits::FromPointerReader<'a> for Reader<'a> {
     fn get_from_pointer(reader: &::capnp::private::layout::PointerReader<'a>) -> Result<Reader<'a>> {
-      Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
+      ::std::result::Result::Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
     }
   }
 
@@ -221,7 +221,7 @@ pub mod raw_data_point {
       ::capnp::traits::FromStructBuilder::new(builder.init_struct(_private::STRUCT_SIZE))
     }
     fn get_from_pointer(builder: ::capnp::private::layout::PointerBuilder<'a>) -> Result<Builder<'a>> {
-      Ok(::capnp::traits::FromStructBuilder::new(try!(builder.get_struct(_private::STRUCT_SIZE, ::std::ptr::null()))))
+      ::std::result::Result::Ok(::capnp::traits::FromStructBuilder::new(try!(builder.get_struct(_private::STRUCT_SIZE, ::std::ptr::null()))))
     }
   }
 
@@ -349,7 +349,7 @@ pub mod raw_data_point {
 
     pub use self::Which::{Integer,Float,Boolean,Text};
 
-    #[derive(Copy)]
+    #[derive(Clone, Copy)]
     pub struct Reader<'a> { reader : layout::StructReader<'a> }
 
     impl <'a> ::capnp::traits::HasTypeId for Reader<'a> {
@@ -364,7 +364,7 @@ pub mod raw_data_point {
 
     impl <'a> ::capnp::traits::FromPointerReader<'a> for Reader<'a> {
       fn get_from_pointer(reader: &::capnp::private::layout::PointerReader<'a>) -> Result<Reader<'a>> {
-        Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
+        ::std::result::Result::Ok(::capnp::traits::FromStructReader::new(try!(reader.get_struct(::std::ptr::null()))))
       }
     }
 

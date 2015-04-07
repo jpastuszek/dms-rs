@@ -1,8 +1,8 @@
-use nanomsg::{Socket, NanoResult, Protocol};
+use nanomsg::{Socket, Protocol};
 use capnp::serialize_packed;
 use capnp::{MallocMessageBuilder};
 use capnp::io::OutputStream;
-use std::io::Write;
+//use std::io::Write;
 use std::io::Result;
 
 pub struct MessageHeader {
@@ -40,9 +40,7 @@ impl SendMessage for Socket {
         let mut data: Vec<u8> = header.to_bytes();
         let mut buf = MsgBuf { out: Vec::new() };
 
-        {
-            serialize_packed::write_packed_message_unbuffered(&mut buf, message).ok().unwrap();
-        }
+        serialize_packed::write_packed_message_unbuffered(&mut buf, message).ok().unwrap();
 
         println!("write");
         data.extend(buf.out);
@@ -53,11 +51,12 @@ impl SendMessage for Socket {
 
 describe! nanomsg_socket_extensions {
     before_each {
-        use nanomsg::{Socket, NanoResult, Protocol};
+        use nanomsg::{Socket, Protocol};
         use capnp::{MessageBuilder, MallocMessageBuilder};
         use messaging::SendMessage;
         use std::*;
         use std::thread::JoinGuard;
+        use std::io::Read;
         use chrono::*;
 
         #[allow(dead_code)]
@@ -92,8 +91,9 @@ describe! nanomsg_socket_extensions {
             socket.send_message(header, &mut message);
         });
 
-        match pull.read_to_end() {
-            Ok(msg) => println!("{:?}", msg),
+        let mut msg = Vec::new();
+        match pull.read_to_end(&mut msg) {
+            Ok(_) => println!("{:?}", msg),
             Err(error) => panic!("got error: {}", error)
         }
     }
