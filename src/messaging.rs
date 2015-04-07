@@ -1,9 +1,8 @@
-use nanomsg::{Socket, Protocol};
+use nanomsg::Socket;
 use capnp::serialize_packed;
 use capnp::{MallocMessageBuilder};
 use capnp::io::OutputStream;
-//use std::io::Write;
-use std::io::Result;
+use std::io::Error;
 
 pub struct MessageHeader {
     data_type: String,
@@ -18,34 +17,31 @@ impl MessageHeader {
     }
 }
 
-struct MsgBuf {
-    out: Vec<u8>
-}
-
-impl OutputStream for MsgBuf {
-    fn write(&mut self, buf: &[u8]) -> Result<()> {
-        self.out.push_all(buf);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<()> { Ok(()) }
-}
-
 trait SendMessage {
-    fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder);
+    fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder) -> Result<(), Error>;
 }
 
 impl SendMessage for Socket {
-    fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) {
+    fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) -> Result<(), Error> {
         let mut data: Vec<u8> = header.to_bytes();
-        let mut buf = MsgBuf { out: Vec::new() };
+        match serialize_packed::write_packed_message_unbuffered(&mut data, message) {
+            Ok(_) => trace!("Message serialized"),
+            Err(error) => {
+                error!("Failed to serialize message for {}: {}", header.data_type, error);
+                return Err(error);
+            }
+        }
 
-        serialize_packed::write_packed_message_unbuffered(&mut buf, message).ok().unwrap();
+        debug!("Sending message with {} on topic {}", header.data_type, header.topic);
+        match self.write(&data) {
+            Ok(_) => trace!("Message sent"),
+            Err(error) => {
+                error!("Failed to send message: {}", error);
+                return Err(error);
+            }
+        };
 
-        println!("write");
-        data.extend(buf.out);
-        self.write(&data);
-        println!("write done");
+        Ok(())
     }
 }
 
@@ -54,8 +50,7 @@ describe! nanomsg_socket_extensions {
         use nanomsg::{Socket, Protocol};
         use capnp::{MessageBuilder, MallocMessageBuilder};
         use messaging::SendMessage;
-        use std::*;
-        use std::thread::JoinGuard;
+        use std::thread;
         use std::io::Read;
         use chrono::*;
 
@@ -65,13 +60,13 @@ describe! nanomsg_socket_extensions {
         }
 
         let mut pull = Socket::new(Protocol::Pull).unwrap();
-        let pull_endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
+        let _ = pull.bind("ipc:///tmp/test.ipc").unwrap();
     }
 
     it "should allow sendign message" {
-        let thread = thread::scoped(move || {
+        let _ = thread::scoped(move || {
             let mut socket = Socket::new(Protocol::Push).unwrap();
-            let endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
+            let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
 
             let header = MessageHeader {
                 data_type: "TestData".to_string(),
@@ -88,7 +83,7 @@ describe! nanomsg_socket_extensions {
                 date_time_builder.set_nanosecond(timestamp.nanosecond());
             }
 
-            socket.send_message(header, &mut message);
+            socket.send_message(header, &mut message).unwrap();
         });
 
         let mut msg = Vec::new();
