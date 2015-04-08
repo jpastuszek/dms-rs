@@ -17,7 +17,7 @@ impl MessageHeader {
     }
 }
 
-trait SendMessage {
+pub trait SendMessage {
     fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder) -> Result<(), Error>;
 }
 
@@ -45,51 +45,55 @@ impl SendMessage for Socket {
     }
 }
 
-describe! nanomsg_socket_extensions {
-    before_each {
-        use nanomsg::{Socket, Protocol};
-        use capnp::{MessageBuilder, MallocMessageBuilder};
-        use messaging::SendMessage;
-        use std::thread;
-        use std::io::Read;
-        use chrono::*;
+#[cfg(test)]
+mod test {
+    pub use super::*;
 
-        #[allow(dead_code)]
-        mod raw_data_point_capnp {
-            include!("./schema/raw_data_point_capnp.rs");
-        }
+    pub use nanomsg::{Socket, Protocol};
+    pub use capnp::{MessageBuilder, MallocMessageBuilder};
+    pub use std::thread;
+    pub use std::io::Read;
+    pub use chrono::*;
 
-        let mut pull = Socket::new(Protocol::Pull).unwrap();
-        let _ = pull.bind("ipc:///tmp/test.ipc").unwrap();
+    #[allow(dead_code)]
+    pub mod raw_data_point_capnp {
+        include!("./schema/raw_data_point_capnp.rs");
     }
 
-    it "should allow sendign message" {
-        let _ = thread::scoped(move || {
-            let mut socket = Socket::new(Protocol::Push).unwrap();
-            let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
+    describe! nanomsg_socket_extensions {
+        before_each {
+            let mut pull = Socket::new(Protocol::Pull).unwrap();
+            let _ = pull.bind("ipc:///tmp/test.ipc").unwrap();
+        }
 
-            let header = MessageHeader {
-                data_type: "TestData".to_string(),
-                topic: "hello world".to_string(),
-                version: 1,
-                encoding: "capnp".to_string()
-            };
+        it "should allow sending message with header and capnp serialized body" {
+            let _ = thread::scoped(move || {
+                let mut socket = Socket::new(Protocol::Push).unwrap();
+                let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
 
-            let mut message = MallocMessageBuilder::new_default();
-            {
-                let timestamp = UTC::now();
-                let mut date_time_builder = message.init_root::<raw_data_point_capnp::date_time::Builder>();
-                date_time_builder.set_unix_timestamp(timestamp.timestamp());
-                date_time_builder.set_nanosecond(timestamp.nanosecond());
+                let header = MessageHeader {
+                    data_type: "TestData".to_string(),
+                    topic: "hello world".to_string(),
+                    version: 1,
+                    encoding: "capnp".to_string()
+                };
+
+                let mut message = MallocMessageBuilder::new_default();
+                {
+                    let timestamp = UTC::now();
+                    let mut date_time_builder = message.init_root::<raw_data_point_capnp::date_time::Builder>();
+                    date_time_builder.set_unix_timestamp(timestamp.timestamp());
+                    date_time_builder.set_nanosecond(timestamp.nanosecond());
+                }
+
+                socket.send_message(header, &mut message).unwrap();
+            });
+
+            let mut msg = Vec::new();
+            match pull.read_to_end(&mut msg) {
+                Ok(_) => println!("{:?}", msg),
+                Err(error) => panic!("got error: {}", error)
             }
-
-            socket.send_message(header, &mut message).unwrap();
-        });
-
-        let mut msg = Vec::new();
-        match pull.read_to_end(&mut msg) {
-            Ok(_) => println!("{:?}", msg),
-            Err(error) => panic!("got error: {}", error)
         }
     }
 }
