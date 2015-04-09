@@ -25,7 +25,7 @@ impl SendMessage for Socket {
     fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) -> Result<(), Error> {
         let mut data: Vec<u8> = header.to_bytes();
         match serialize_packed::write_packed_message_unbuffered(&mut data, message) {
-            Ok(_) => trace!("Message serialized"),
+            Ok(_) => trace!("Message serialized ({} bytes)", data.len()),
             Err(error) => {
                 error!("Failed to serialize message for {}: {}", header.data_type, error);
                 return Err(error);

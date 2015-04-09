@@ -20,6 +20,7 @@ mod raw_data_point_capnp {
 mod collector;
 mod messaging;
 
+#[cfg(not(test))]
 fn main() {
 	env_logger::init().unwrap();
 
