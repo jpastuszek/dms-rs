@@ -4,16 +4,33 @@ use capnp::{MallocMessageBuilder};
 use capnp::io::OutputStream;
 use std::io::Error;
 
+#[derive(Debug)]
+pub enum DataType {
+    RawDataPoint
+}
+
+#[derive(Debug)]
+pub enum Encoding {
+    Capnp
+}
+
+#[derive(Debug)]
 pub struct MessageHeader {
-    data_type: String,
+    data_type: DataType,
     topic: String,
     version: i8,
-    encoding: String,
+    encoding: Encoding,
 }
 
 impl MessageHeader {
     fn to_bytes(& self) -> Vec<u8> {
-        format!("{}/{}\n{}\n{}\n\n", self.data_type, self.topic, self.version, self.encoding).into_bytes()
+        let encoding = match self.encoding {
+            Encoding::Capnp => "capnp"
+        };
+        let data_type = match self.data_type {
+            DataType::RawDataPoint => "RawDataPoint"
+        };
+        format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes()
     }
 }
 
@@ -27,12 +44,12 @@ impl SendMessage for Socket {
         match serialize_packed::write_packed_message_unbuffered(&mut data, message) {
             Ok(_) => trace!("Message serialized ({} bytes)", data.len()),
             Err(error) => {
-                error!("Failed to serialize message for {}: {}", header.data_type, error);
+                error!("Failed to serialize message for {:?}: {}", header.data_type, error);
                 return Err(error);
             }
         }
 
-        debug!("Sending message with {} on topic {}", header.data_type, header.topic);
+        debug!("Sending message with {:?} on topic {}", header.data_type, header.topic);
         match self.write(&data) {
             Ok(_) => trace!("Message sent"),
             Err(error) => {
@@ -72,10 +89,10 @@ mod test {
                 let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
 
                 let header = MessageHeader {
-                    data_type: "TestData".to_string(),
+                    data_type: DataType::RawDataPoint,
                     topic: "hello world".to_string(),
                     version: 1,
-                    encoding: "capnp".to_string()
+                    encoding: Encoding::Capnp
                 };
 
                 let mut message = MallocMessageBuilder::new_default();
