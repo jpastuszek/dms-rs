@@ -1,6 +1,7 @@
+use chrono::*;
 use nanomsg::Socket;
 use capnp::serialize_packed;
-use capnp::{MallocMessageBuilder};
+use capnp::{MessageBuilder, MallocMessageBuilder};
 use capnp::io::OutputStream;
 use std::io::Error;
 
@@ -9,21 +10,104 @@ pub enum DataType {
     RawDataPoint
 }
 
-#[derive(Debug)]
+#[derive(Clone,Copy,Debug)]
 pub enum Encoding {
     Capnp
+}
+
+pub trait SerDeMessage {
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, Error>;
+    fn data_type() -> DataType;
+    fn version() -> u8 {
+        0
+    }
+}
+
+#[derive(Clone,Debug)]
+#[allow(dead_code)]
+pub enum DataValue {
+    Integer(i64),
+    Float(f64),
+    Bool(bool),
+    Text(String),
+}
+
+#[derive(Debug)]
+pub struct RawDataPoint {
+    pub location: String,
+    pub path: String,
+    pub component: String,
+    pub timestamp: DateTime<UTC>,
+    pub value: DataValue,
+}
+
+impl SerDeMessage for RawDataPoint {
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, Error> {
+        match encoding {
+            Encoding::Capnp => {
+                let mut message = MallocMessageBuilder::new_default();
+                {
+                    let mut raw_data_point_builder = message.init_root::<super::raw_data_point_capnp::raw_data_point::Builder>();
+
+                    raw_data_point_builder.set_location(&*self.location);
+                    raw_data_point_builder.set_path(&*self.path);
+                    raw_data_point_builder.set_component(&*self.component);
+
+                    {
+                        let mut date_time_builder = raw_data_point_builder.borrow().init_timestamp();
+                        date_time_builder.set_unix_timestamp(self.timestamp.timestamp());
+                        date_time_builder.set_nanosecond(self.timestamp.nanosecond());
+                    }
+
+                    {
+                        let mut _value = raw_data_point_builder.borrow().init_value();
+                        match self.value {
+                            DataValue::Integer(value) => {
+                                _value.set_integer(value);
+                            },
+                            DataValue::Float(value) => {
+                                _value.set_float(value);
+                            },
+                            DataValue::Bool(value) => {
+                                _value.set_boolean(value);
+                            },
+                            DataValue::Text(ref value) => {
+                                _value.set_text(&*value);
+                            },
+                        }
+                    }
+                }
+
+                let mut data = Vec::new();
+                match serialize_packed::write_packed_message_unbuffered(&mut data, &mut message) {
+                    Ok(_) => {
+                        trace!("Message serialized ({} bytes)", data.len());
+                        return Ok(data);
+                    },
+                    Err(error) => {
+                        error!("Failed to serialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                        return Err(error);
+                    }
+                }
+            }
+        }
+    }
+
+    fn data_type() -> DataType {
+        DataType::RawDataPoint
+    }
 }
 
 #[derive(Debug)]
 pub struct MessageHeader {
     data_type: DataType,
     topic: String,
-    version: i8,
+    version: u8,
     encoding: Encoding,
 }
 
 impl MessageHeader {
-    fn to_bytes(& self) -> Vec<u8> {
+    fn to_bytes(&self) -> Vec<u8> {
         let encoding = match self.encoding {
             Encoding::Capnp => "capnp"
         };
@@ -34,22 +118,28 @@ impl MessageHeader {
     }
 }
 
-pub trait SendMessage {
-    fn send_message(&mut self, MessageHeader, &mut MallocMessageBuilder) -> Result<(), Error>;
+pub trait SendMessage<T> {
+    fn send_message(&mut self, topic: String, message: &T, encoding: Encoding) -> Result<(), Error> where T: SerDeMessage;
 }
 
-impl SendMessage for Socket {
-    fn send_message(&mut self, header: MessageHeader, message: &mut MallocMessageBuilder) -> Result<(), Error> {
-        let mut data: Vec<u8> = header.to_bytes();
-        match serialize_packed::write_packed_message_unbuffered(&mut data, message) {
-            Ok(_) => trace!("Message serialized ({} bytes)", data.len()),
-            Err(error) => {
-                error!("Failed to serialize message for {:?}: {}", header.data_type, error);
-                return Err(error);
-            }
-        }
+impl<T> SendMessage<T> for Socket {
+    fn send_message(&mut self, topic: String, message: &T, encoding: Encoding) -> Result<(), Error>
+        where T: SerDeMessage {
+        let mut data: Vec<u8>;
 
-        debug!("Sending message with {:?} on topic {}", header.data_type, header.topic);
+        let header = MessageHeader {
+            data_type: T::data_type(),
+            topic: topic,
+            version: T::version(),
+            encoding: encoding
+        };
+        data = header.to_bytes();
+
+        let body = try!(message.to_bytes(encoding));
+
+        data.extend(body);
+
+        debug!("Sending message with {:?} on topic {}", T::data_type(), header.topic);
         match self.write(&data) {
             Ok(_) => trace!("Message sent"),
             Err(error) => {
@@ -87,23 +177,17 @@ mod test {
             let _ = thread::scoped(move || {
                 let mut socket = Socket::new(Protocol::Push).unwrap();
                 let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
+                let now = UTC::now();
 
-                let header = MessageHeader {
-                    data_type: DataType::RawDataPoint,
-                    topic: "hello world".to_string(),
-                    version: 1,
-                    encoding: Encoding::Capnp
+                let message = RawDataPoint {
+                    location: "myserver".to_string(),
+                    path: "cpu/usage".to_string(),
+                    component: "iowait".to_string(),
+                    timestamp: now,
+                    value: DataValue::Float(0.2)
                 };
 
-                let mut message = MallocMessageBuilder::new_default();
-                {
-                    let timestamp = UTC::now();
-                    let mut date_time_builder = message.init_root::<raw_data_point_capnp::date_time::Builder>();
-                    date_time_builder.set_unix_timestamp(timestamp.timestamp());
-                    date_time_builder.set_nanosecond(timestamp.nanosecond());
-                }
-
-                socket.send_message(header, &mut message).unwrap();
+                socket.send_message("hello".to_string(), &message, Encoding::Capnp).unwrap();
             });
 
             let mut msg = Vec::new();

@@ -10,24 +10,7 @@ use std::thread;
 use std::thread::JoinGuard;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
-
-#[derive(Clone,Debug)]
-#[allow(dead_code)]
-pub enum DataValue {
-    Integer(i64),
-    Float(f64),
-    Bool(bool),
-    Text(String),
-}
-
-#[derive(Debug)]
-struct RawDataPoint {
-    location: String,
-    path: String,
-    component: String,
-    timestamp: DateTime<UTC>,
-    value: DataValue,
-}
+use messaging::{RawDataPoint, DataValue};
 
 pub struct CollectorThread<'a> {
     // NOTE: this needs to be before thread so channel is dropped before we join tread
@@ -133,6 +116,7 @@ impl Collector {
     }
 }
 
+/*
 describe! collector_thread {
     it "should shut down after going out of scope" {
         {
@@ -152,4 +136,4 @@ describe! collector_thread {
         }
     }
 }
-
+*/
