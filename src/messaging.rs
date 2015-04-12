@@ -119,11 +119,11 @@ impl MessageHeader {
 }
 
 pub trait SendMessage<T> {
-    fn send_message(&mut self, topic: String, message: &T, encoding: Encoding) -> Result<(), Error> where T: SerDeMessage;
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), Error> where T: SerDeMessage;
 }
 
 impl<T> SendMessage<T> for Socket {
-    fn send_message(&mut self, topic: String, message: &T, encoding: Encoding) -> Result<(), Error>
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), Error>
         where T: SerDeMessage {
         let mut data: Vec<u8>;
 
@@ -185,7 +185,7 @@ mod test {
                     value: DataValue::Float(0.2)
                 };
 
-                socket.send_message("hello".to_string(), &message, Encoding::Capnp).unwrap();
+                socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
             });
 
             let mut msg = Vec::new();

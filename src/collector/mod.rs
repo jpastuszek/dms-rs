@@ -29,7 +29,7 @@ impl<'a> CollectorThread<'a> {
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
-                        socket.send_message("".to_string(), &*raw_data_point, Encoding::Capnp).unwrap();
+                        socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp).unwrap();
                     },
                     Err(error) => {
                         info!("Collector thread finished: {}", error);
