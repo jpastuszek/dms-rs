@@ -168,15 +168,13 @@ mod test {
     }
 
     describe! nanomsg_socket_extensions {
-        before_each {
-            let mut pull = Socket::new(Protocol::Pull).unwrap();
-            let _ = pull.bind("ipc:///tmp/test.ipc").unwrap();
-        }
-
         it "should allow sending message with header and capnp serialized body" {
+            let mut pull = Socket::new(Protocol::Pull).unwrap();
+            let mut _endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
+
             let _ = thread::scoped(move || {
                 let mut socket = Socket::new(Protocol::Push).unwrap();
-                let _ = socket.connect("ipc:///tmp/test.ipc").unwrap();
+                let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
                 let now = UTC::now();
 
                 let message = RawDataPoint {

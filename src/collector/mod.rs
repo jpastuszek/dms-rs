@@ -21,7 +21,7 @@ impl<'a> CollectorThread<'a> {
 
         let thread = thread::scoped(move || {
             let mut socket = Socket::new(Protocol::Push).ok().expect("Cannot create push socket!");
-            let _ = match socket.connect(data_processor_address) {
+            let mut _endpoint = match socket.connect(data_processor_address) {
                 Ok(ep) => ep,
                 Err(error) => panic!("Failed to connect data processor at '{}': {}", data_processor_address, error)
             };
@@ -87,11 +87,6 @@ mod test {
     pub use std::io::Read;
 
     describe! collector_thread {
-        before_each {
-            let mut pull = Socket::new(Protocol::Pull).unwrap();
-            let _ = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
-        }
-
         it "should shut down after going out of scope" {
             {
                 let _ = CollectorThread::spawn("ipc:///tmp/test-collector1.ipc");
@@ -101,17 +96,26 @@ mod test {
 
         describe! collector {
              it "should pass data points to nanosmg pull socket" {
-                let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+                let mut pull = Socket::new(Protocol::Pull).unwrap();
+                let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
+                {
+                    let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+                    let mut collector = collector_thread.new_collector();
 
-                let mut collector = collector_thread.new_collector();
+                    collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+                    collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
 
-                collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-                collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-
-                let mut msg = Vec::new();
-                match pull.read_to_end(&mut msg) {
-                    Ok(_) => println!("{:?}", msg),
-                    Err(error) => panic!("got error: {}", error)
+                    let mut msg = Vec::new();
+                    match pull.read_to_end(&mut msg) {
+                        Ok(_) => println!("{:?}", msg),
+                        Err(error) => panic!("got error: {}", error)
+                    }
+                    /*
+                    match pull.read_to_end(&mut msg) {
+                        Ok(_) => println!("{:?}", msg),
+                        Err(error) => panic!("got error: {}", error)
+                    }
+                    */
                 }
             }
         }
