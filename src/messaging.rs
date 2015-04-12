@@ -5,7 +5,7 @@ use capnp::{MessageBuilder, MallocMessageBuilder};
 use capnp::io::OutputStream;
 use std::io::Error;
 
-#[derive(Debug)]
+#[derive(Clone,Copy,Debug)]
 pub enum DataType {
     RawDataPoint
 }
@@ -23,7 +23,7 @@ pub trait SerDeMessage {
     }
 }
 
-#[derive(Clone,Debug)]
+#[derive(Debug)]
 #[allow(dead_code)]
 pub enum DataValue {
     Integer(i64),

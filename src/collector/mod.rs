@@ -65,12 +65,12 @@ impl Collector {
             path: path.to_string(),
             component: component.to_string(),
             timestamp: self.timestamp,
-            value: value.clone()
+            value: value
         });
 
         match self.sink.send(raw_data_point) {
             Ok(_) => {
-                debug!("Collected raw data point for location: '{}', path: '{}', component: '{}', value: {:?}", location, path, component, value);
+                debug!("Collected raw data point for location: '{}', path: '{}', component: '{}'", location, path, component);
             }
             Err(error) => {
                 error!("Failed to send collected raw data point: {}", error);
