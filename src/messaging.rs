@@ -60,19 +60,19 @@ impl SerDeMessage for RawDataPoint {
                     }
 
                     {
-                        let mut _value = raw_data_point_builder.borrow().init_value();
+                        let mut value_builder = raw_data_point_builder.borrow().init_value();
                         match self.value {
                             DataValue::Integer(value) => {
-                                _value.set_integer(value);
+                                value_builder.set_integer(value);
                             },
                             DataValue::Float(value) => {
-                                _value.set_float(value);
+                                value_builder.set_float(value);
                             },
                             DataValue::Bool(value) => {
-                                _value.set_boolean(value);
+                                value_builder.set_boolean(value);
                             },
                             DataValue::Text(ref value) => {
-                                _value.set_text(&*value);
+                                value_builder.set_text(&*value);
                             },
                         }
                     }
@@ -107,6 +107,19 @@ pub struct MessageHeader {
 }
 
 impl MessageHeader {
+    fn from_bytes(bytes: Vec<u8>) -> MessageHeader {
+        for element in bytes.splitn(5, |byte| *byte == '\n' as u8) {
+            println!("got: {:?}", element);
+        };
+
+        MessageHeader {
+            data_type: DataType::RawDataPoint,
+            topic: "fsa".to_string(),
+            version: 1,
+            encoding: Encoding::Capnp
+        }
+    }
+
     fn to_bytes(&self) -> Vec<u8> {
         let encoding = match self.encoding {
             Encoding::Capnp => "capnp"
@@ -190,7 +203,16 @@ mod test {
 
             let mut msg = Vec::new();
             match pull.read_to_end(&mut msg) {
-                Ok(_) => println!("{:?}", msg),
+                Ok(_) => {
+                    //println!("{:?}", msg);
+                    let mut splits = msg.splitn(5, |byte| *byte == '\n' as u8);
+                    assert_eq!(splits.next().unwrap(), &*"RawDataPoint/hello".to_string().into_bytes());
+                    assert_eq!(splits.next().unwrap(), &*"0".to_string().into_bytes());
+                    assert_eq!(splits.next().unwrap(), &*"capnp".to_string().into_bytes());
+                    assert!(splits.next().unwrap().is_empty()); // body separator
+                    assert!(splits.next().unwrap().len() > 10); // body
+                    assert!(splits.next().is_none()); // end
+                },
                 Err(error) => panic!("got error: {}", error)
             }
         }
