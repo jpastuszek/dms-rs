@@ -3,14 +3,14 @@ use nanomsg::Socket;
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder};
 use capnp::io::OutputStream;
-use std::io::Error;
+use std::io::{Error,ErrorKind};
 
-#[derive(Clone,Copy,Debug)]
+#[derive(Clone,Copy,Debug,PartialEq)]
 pub enum DataType {
     RawDataPoint
 }
 
-#[derive(Clone,Copy,Debug)]
+#[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Encoding {
     Capnp
 }
@@ -107,17 +107,68 @@ pub struct MessageHeader {
 }
 
 impl MessageHeader {
-    fn from_bytes(bytes: Vec<u8>) -> MessageHeader {
-        for element in bytes.splitn(5, |byte| *byte == '\n' as u8) {
-            println!("got: {:?}", element);
+    fn from_bytes(bytes: Vec<u8>) -> Result<MessageHeader, Error> {
+        let splits = bytes.split(|byte| *byte == '\n' as u8);
+        let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
+
+        let data_type;
+        let topic;
+        match parts.next() {
+            Some(dt_topic) => {
+                let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
+                data_type = match splits.next() {
+                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                        Ok(string) => match &*string {
+                            "RawDataPoint" => DataType::RawDataPoint,
+                            _ => return Err(Error::new(ErrorKind::InvalidInput, &*format!("unknown data type: {}", string)))
+                        },
+                        Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding data type string: {}", utf8_error)))
+                    },
+                    None => return Err(Error::new(ErrorKind::InvalidInput, "no data type found in message header"))
+                };
+                topic = match splits.next() {
+                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                        Ok(string) => string,
+                        Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding topic string: {}", utf8_error)))
+                    },
+                    None => return Err(Error::new(ErrorKind::InvalidInput, "no topic found in message header"))
+                };
+            },
+            None => return Err(Error::new(ErrorKind::InvalidInput, "no data type/topic part found in message header"))
         };
 
-        MessageHeader {
-            data_type: DataType::RawDataPoint,
-            topic: "fsa".to_string(),
-            version: 1,
-            encoding: Encoding::Capnp
-        }
+        let version = match parts.next() {
+            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                Ok(string) => match string.parse::<u8>() {
+                    Ok(int) => int,
+                    Err(parse_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("message version is not u8 number: {}", parse_error)))
+                },
+                Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding version string: {}", utf8_error)))
+            },
+            None => return Err(Error::new(ErrorKind::InvalidInput, "no version found in message header"))
+        };
+
+        let encoding = match parts.next() {
+            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                Ok(string) => match &*string {
+                    "capnp" => Encoding::Capnp,
+                    _ => return Err(Error::new(ErrorKind::InvalidInput, &*format!("unknown encoding: {}", string)))
+                },
+                Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding encoding string: {}", utf8_error)))
+            },
+            None => return Err(Error::new(ErrorKind::InvalidInput, "no encoding found in message header"))
+        };
+
+        for part in parts {
+            warn!("found extra part in message header: {:?}", part);
+        };
+
+        Ok(MessageHeader {
+            data_type: data_type,
+            topic: topic,
+            version: version,
+            encoding: encoding
+        })
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -180,40 +231,66 @@ mod test {
         include!("./schema/raw_data_point_capnp.rs");
     }
 
+    describe! message_header {
+        it "should be serializable" {
+            let header = MessageHeader {
+                data_type: DataType::RawDataPoint,
+                topic: "hello".to_string(),
+                version: 42,
+                encoding: Encoding::Capnp
+            };
+
+            let bytes = header.to_bytes();
+            assert_eq!(bytes, "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes());
+        }
+
+        it "should be deserializable" {
+            let bytes = "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes();
+
+            let header = MessageHeader::from_bytes(bytes).unwrap();
+            assert_eq!(header.data_type, DataType::RawDataPoint);
+            assert_eq!(header.topic, "hello".to_string());
+            assert_eq!(header.version, 42);
+            assert_eq!(header.encoding, Encoding::Capnp);
+        }
+    }
+
     describe! nanomsg_socket_extensions {
-        it "should allow sending message with header and capnp serialized body" {
-            let mut pull = Socket::new(Protocol::Pull).unwrap();
-            let mut _endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
+        describe! send_message {
+            it "should allow sending message with header and capnp serialized body" {
+                let mut pull = Socket::new(Protocol::Pull).unwrap();
+                let mut _endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
 
-            let _ = thread::scoped(move || {
-                let mut socket = Socket::new(Protocol::Push).unwrap();
-                let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
-                let now = UTC::now();
+                let _ = thread::scoped(move || {
+                    let mut socket = Socket::new(Protocol::Push).unwrap();
+                    let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
+                    let now = UTC::now();
 
-                let message = RawDataPoint {
-                    location: "myserver".to_string(),
-                    path: "cpu/usage".to_string(),
-                    component: "iowait".to_string(),
-                    timestamp: now,
-                    value: DataValue::Float(0.2)
-                };
+                    let message = RawDataPoint {
+                        location: "myserver".to_string(),
+                        path: "cpu/usage".to_string(),
+                        component: "iowait".to_string(),
+                        timestamp: now,
+                        value: DataValue::Float(0.2)
+                    };
 
-                socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
-            });
+                    socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
+                });
 
-            let mut msg = Vec::new();
-            match pull.read_to_end(&mut msg) {
-                Ok(_) => {
-                    //println!("{:?}", msg);
-                    let mut splits = msg.splitn(5, |byte| *byte == '\n' as u8);
-                    assert_eq!(splits.next().unwrap(), &*"RawDataPoint/hello".to_string().into_bytes());
-                    assert_eq!(splits.next().unwrap(), &*"0".to_string().into_bytes());
-                    assert_eq!(splits.next().unwrap(), &*"capnp".to_string().into_bytes());
-                    assert!(splits.next().unwrap().is_empty()); // body separator
-                    assert!(splits.next().unwrap().len() > 10); // body
-                    assert!(splits.next().is_none()); // end
-                },
-                Err(error) => panic!("got error: {}", error)
+                let mut msg = Vec::new();
+                match pull.read_to_end(&mut msg) {
+                    Ok(_) => {
+                        //println!("{:?}", msg);
+                        let mut splits = msg.splitn(5, |byte| *byte == '\n' as u8);
+                        assert_eq!(splits.next().unwrap(), &*"RawDataPoint/hello".to_string().into_bytes());
+                        assert_eq!(splits.next().unwrap(), &*"0".to_string().into_bytes());
+                        assert_eq!(splits.next().unwrap(), &*"capnp".to_string().into_bytes());
+                        assert!(splits.next().unwrap().is_empty()); // body separator
+                        assert!(splits.next().unwrap().len() > 10); // body
+                        assert!(splits.next().is_none()); // end
+                    },
+                    Err(error) => panic!("got error: {}", error)
+                }
             }
         }
     }
