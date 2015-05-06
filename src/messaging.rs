@@ -225,6 +225,8 @@ mod test {
     pub use std::thread;
     pub use std::io::Read;
     pub use chrono::*;
+    pub use std::io::{Error,ErrorKind};
+    pub use std::error::Error as StdError;
 
     #[allow(dead_code)]
     pub mod raw_data_point_capnp {
@@ -244,14 +246,108 @@ mod test {
             assert_eq!(bytes, "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes());
         }
 
-        it "should be deserializable" {
-            let bytes = "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes();
+        describe! deserialization {
+            it "should deserialize correctly formated message header" {
+                let bytes = "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes();
 
-            let header = MessageHeader::from_bytes(bytes).unwrap();
-            assert_eq!(header.data_type, DataType::RawDataPoint);
-            assert_eq!(header.topic, "hello".to_string());
-            assert_eq!(header.version, 42);
-            assert_eq!(header.encoding, Encoding::Capnp);
+                let header = MessageHeader::from_bytes(bytes).unwrap();
+                assert_eq!(header.data_type, DataType::RawDataPoint);
+                assert_eq!(header.topic, "hello".to_string());
+                assert_eq!(header.version, 42);
+                assert_eq!(header.encoding, Encoding::Capnp);
+            }
+
+            it "should deserialize message with empty topic" {
+                let bytes = "RawDataPoint/\n42\ncapnp\n\n".to_string().into_bytes();
+
+                let header = MessageHeader::from_bytes(bytes).unwrap();
+                assert_eq!(header.data_type, DataType::RawDataPoint);
+                assert_eq!(header.topic, "".to_string());
+                assert_eq!(header.version, 42);
+                assert_eq!(header.encoding, Encoding::Capnp);
+            }
+
+            it "should deserialize message with extra sections" {
+                let bytes = "RawDataPoint/\n42\ncapnp\nblah\n\n".to_string().into_bytes();
+
+                let header = MessageHeader::from_bytes(bytes).unwrap();
+                assert_eq!(header.data_type, DataType::RawDataPoint);
+                assert_eq!(header.topic, "".to_string());
+                assert_eq!(header.version, 42);
+                assert_eq!(header.encoding, Encoding::Capnp);
+            }
+
+            describe! error_handling {
+                it "should provide error when not enought header sections are provided" {
+                    {
+                        let bytes = "RawDataPoint/hello\n42\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert_eq!(err.description(), "no encoding found in message header");
+                    }
+                    {
+                        let bytes = "RawDataPoint/hello\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert_eq!(err.description(), "no version found in message header");
+                    }
+                    {
+                        let bytes = "RawDataPoint\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert_eq!(err.description(), "no topic found in message header");
+                    }
+                    {
+                        let bytes = "\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert_eq!(err.description(), "no data type/topic part found in message header");
+                    }
+                }
+
+                it "should provide error when version is not a positive integer" {
+                    {
+                        let bytes = "RawDataPoint/hello\n-1\ncapnp\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert!(err.description().starts_with("message version is not u8 number"));
+                    }
+                    {
+                        let bytes = "RawDataPoint/hello\n300\ncapnp\n\n".to_string().into_bytes();
+
+                        let result = MessageHeader::from_bytes(bytes);
+                        assert!(result.is_err());
+                        let err = result.unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                        assert!(err.description().starts_with("message version is not u8 number"));
+                    }
+                }
+
+                it "should provide error when unknown encoding was found in the message" {
+                    let bytes = "RawDataPoint/hello\n42\ncapn planet\n\n".to_string().into_bytes();
+
+                    let result = MessageHeader::from_bytes(bytes);
+                    assert!(result.is_err());
+                    let err = result.unwrap_err();
+                    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+                    assert!(err.description().starts_with("unknown encoding: capn planet"));
+                }
+            }
         }
     }
 
