@@ -1,9 +1,56 @@
+use std::borrow::ToOwned;
 use chrono::*;
 use nanomsg::Socket;
 use capnp::serialize_packed;
-use capnp::{MessageBuilder, MallocMessageBuilder};
+use capnp::{MessageBuilder, MallocMessageBuilder, MessageReader};
+use capnp::message::ReaderOptions;
 use capnp::io::OutputStream;
-use std::io::{Error,ErrorKind};
+use capnp::io::ArrayInputStream;
+use capnp::Error as CapnpError;
+use std::io::Error as IoError;
+use std::fmt;
+use std::error::Error;
+
+#[derive(Debug)]
+enum MessagingError {
+    CapnpError(CapnpError),
+    IoError(IoError),
+    Internal(String)
+}
+
+impl Error for MessagingError {
+    fn description(&self) -> &str {
+        match self {
+            &MessagingError::CapnpError(ref err) => err.description(),
+            &MessagingError::IoError(ref err) => err.description(),
+            &MessagingError::Internal(ref err) => &err,
+        }
+    }
+}
+
+impl MessagingError {
+    fn new(msg: &str) -> MessagingError {
+        MessagingError::Internal(msg.to_owned())
+    }
+}
+
+impl fmt::Display for MessagingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "messaging error: {}", self.description())
+    }
+}
+
+impl From<CapnpError> for MessagingError {
+    fn from(error: CapnpError) -> MessagingError {
+        MessagingError::CapnpError(error)
+    }
+}
+
+impl From<IoError> for MessagingError {
+    fn from(error: IoError) -> MessagingError {
+        MessagingError::IoError(error)
+    }
+}
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum DataType {
@@ -16,11 +63,12 @@ pub enum Encoding {
 }
 
 pub trait SerDeMessage {
-    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, Error>;
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, MessagingError>;
     fn data_type() -> DataType;
     fn version() -> u8 {
         0
     }
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, MessagingError>;
 }
 
 #[derive(Debug)]
@@ -42,7 +90,7 @@ pub struct RawDataPoint {
 }
 
 impl SerDeMessage for RawDataPoint {
-    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, Error> {
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, MessagingError> {
         match encoding {
             Encoding::Capnp => {
                 let mut message = MallocMessageBuilder::new_default();
@@ -86,17 +134,69 @@ impl SerDeMessage for RawDataPoint {
                     },
                     Err(error) => {
                         error!("Failed to serialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                        return Err(error);
+                        return Err(MessagingError::from(error));
                     }
                 }
             }
         }
     }
 
+    // TODO: use 'type' alias
     fn data_type() -> DataType {
         DataType::RawDataPoint
     }
+
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, MessagingError> {
+        match encoding {
+            Encoding::Capnp => {
+                let reader = try!(serialize_packed::new_reader_unbuffered(ArrayInputStream::new(bytes), ReaderOptions::new()));
+                let result = reader.get_root::<super::raw_data_point_capnp::raw_data_point::Reader>();
+
+                match result {
+                    Ok(reader) => {
+                        Ok(
+                            RawDataPoint {
+                                location: match reader.get_location() {
+                                    Ok(value) => value.to_string(),
+                                    Err(error) => {
+                                        error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                                        return Err(MessagingError::from(error))
+                                    }
+                                },
+                                path: match reader.get_path() {
+                                    Ok(value) => value.to_string(),
+                                    Err(error) => {
+                                        error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                                        return Err(MessagingError::from(error))
+                                    }
+                                },
+                                component: "iowait".to_string(),
+                                timestamp: UTC::now(),
+                                value: DataValue::Float(0.2)
+                            }
+                        )
+                    },
+                    Err(error) => {
+                        error!("Failed to deserialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                        Err(MessagingError::from(error))
+                    }
+                }
+            }
+        }
+    }
 }
+
+/*
+enum RecvMessageType {
+    RawDataPoint(RawDataPoint),
+    Unknown { data_type: String }
+}
+
+struct RecvMessage {
+    message: RecvMessageType,
+    topic: String
+}
+*/
 
 #[derive(Debug)]
 pub struct MessageHeader {
@@ -107,7 +207,7 @@ pub struct MessageHeader {
 }
 
 impl MessageHeader {
-    fn from_bytes(bytes: Vec<u8>) -> Result<MessageHeader, Error> {
+    fn from_bytes(bytes: Vec<u8>) -> Result<MessageHeader, MessagingError> {
         let splits = bytes.split(|byte| *byte == '\n' as u8);
         let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
 
@@ -120,43 +220,43 @@ impl MessageHeader {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => match &*string {
                             "RawDataPoint" => DataType::RawDataPoint,
-                            _ => return Err(Error::new(ErrorKind::InvalidInput, &*format!("unknown data type: {}", string)))
+                            _ => return Err(MessagingError::new(&*format!("unknown data type: {}", string)))
                         },
-                        Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding data type string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding data type string: {}", utf8_error)))
                     },
-                    None => return Err(Error::new(ErrorKind::InvalidInput, "no data type found in message header"))
+                    None => return Err(MessagingError::new("no data type found in message header"))
                 };
                 topic = match splits.next() {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => string,
-                        Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding topic string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding topic string: {}", utf8_error)))
                     },
-                    None => return Err(Error::new(ErrorKind::InvalidInput, "no topic found in message header"))
+                    None => return Err(MessagingError::new("no topic found in message header"))
                 };
             },
-            None => return Err(Error::new(ErrorKind::InvalidInput, "no data type/topic part found in message header"))
+            None => return Err(MessagingError::new("no data type/topic part found in message header"))
         };
 
         let version = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match string.parse::<u8>() {
                     Ok(int) => int,
-                    Err(parse_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("message version is not u8 number: {}", parse_error)))
+                    Err(parse_error) => return Err(MessagingError::new(&*format!("message version is not u8 number: {}", parse_error)))
                 },
-                Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding version string: {}", utf8_error)))
+                Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding version string: {}", utf8_error)))
             },
-            None => return Err(Error::new(ErrorKind::InvalidInput, "no version found in message header"))
+            None => return Err(MessagingError::new("no version found in message header"))
         };
 
         let encoding = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match &*string {
                     "capnp" => Encoding::Capnp,
-                    _ => return Err(Error::new(ErrorKind::InvalidInput, &*format!("unknown encoding: {}", string)))
+                    _ => return Err(MessagingError::new(&*format!("unknown encoding: {}", string)))
                 },
-                Err(utf8_error) => return Err(Error::new(ErrorKind::InvalidInput, &*format!("error decoding encoding string: {}", utf8_error)))
+                Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding encoding string: {}", utf8_error)))
             },
-            None => return Err(Error::new(ErrorKind::InvalidInput, "no encoding found in message header"))
+            None => return Err(MessagingError::new("no encoding found in message header"))
         };
 
         for part in parts {
@@ -183,11 +283,11 @@ impl MessageHeader {
 }
 
 pub trait SendMessage<T> {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), Error> where T: SerDeMessage;
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError> where T: SerDeMessage;
 }
 
 impl<T> SendMessage<T> for Socket {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), Error>
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError>
         where T: SerDeMessage {
         let mut data: Vec<u8>;
 
@@ -208,7 +308,7 @@ impl<T> SendMessage<T> for Socket {
             Ok(_) => trace!("Message sent"),
             Err(error) => {
                 error!("Failed to send message: {}", error);
-                return Err(error);
+                return Err(MessagingError::from(error));
             }
         };
 
@@ -225,8 +325,7 @@ mod test {
     pub use std::thread;
     pub use std::io::Read;
     pub use chrono::*;
-    pub use std::io::{Error,ErrorKind};
-    pub use std::error::Error as StdError;
+    pub use std::error::Error;
 
     #[allow(dead_code)]
     pub mod raw_data_point_capnp {
@@ -285,7 +384,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert_eq!(err.description(), "no encoding found in message header");
                     }
                     {
@@ -294,7 +392,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert_eq!(err.description(), "no version found in message header");
                     }
                     {
@@ -303,7 +400,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert_eq!(err.description(), "no topic found in message header");
                     }
                     {
@@ -312,7 +408,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert_eq!(err.description(), "no data type/topic part found in message header");
                     }
                 }
@@ -324,7 +419,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert!(err.description().starts_with("message version is not u8 number"));
                     }
                     {
@@ -333,7 +427,6 @@ mod test {
                         let result = MessageHeader::from_bytes(bytes);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
-                        assert_eq!(err.kind(), ErrorKind::InvalidInput);
                         assert!(err.description().starts_with("message version is not u8 number"));
                     }
                 }
@@ -344,7 +437,6 @@ mod test {
                     let result = MessageHeader::from_bytes(bytes);
                     assert!(result.is_err());
                     let err = result.unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::InvalidInput);
                     assert!(err.description().starts_with("unknown encoding: capn planet"));
                 }
             }
