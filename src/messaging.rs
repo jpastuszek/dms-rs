@@ -1,9 +1,11 @@
 use std::borrow::ToOwned;
 use std::marker::PhantomData;
 use std::fmt::Debug;
+use std::fmt::Display;
 use std::io::Error as IoError;
 use std::fmt;
 use std::error::Error;
+use std::string::ToString;
 use chrono::*;
 use nanomsg::Socket;
 use capnp::serialize_packed;
@@ -21,21 +23,14 @@ enum SerDeErrorCause {
     EncodingNotImplemented(Encoding),
 }
 
-impl Error for SerDeErrorCause {
-    fn description(&self) -> &str {
-        match self {
-            &SerDeErrorCause::CapnpError(ref err) => err.description(),
-            &SerDeErrorCause::IoError(ref err) => err.description(),
-            &SerDeErrorCause::Other(ref msg) => &msg,
-            &SerDeErrorCause::EncodingNotImplemented(ref encoding) => "encoding not implemented",
-        }
-    }
-}
-
-impl fmt::Display for SerDeErrorCause {
+impl Display for SerDeErrorCause {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO: per type msg
-        write!(f, "caused by: {}", self.description())
+        match self {
+            &SerDeErrorCause::CapnpError(ref error) => write!(f, "Cap'n Proto Error: {}", error),
+            &SerDeErrorCause::IoError(ref error) => write!(f, "IO Error: {}", error),
+            &SerDeErrorCause::Other(ref msg) => write!(f, "{}", msg),
+            &SerDeErrorCause::EncodingNotImplemented(ref enc) => write!(f, "encoding '{}' not implemented", enc.to_string()),
+        }
     }
 }
 
@@ -124,25 +119,46 @@ impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
 }
 
 #[derive(Debug)]
-enum MessagingOperationKind {
-    Serialization(SerDeErrorCause), // Also type?
-    Sending(IoError)
+enum SendingErrorCause {
+    SerializationError(SerDeErrorCause),
+    IoError(IoError)
+}
+
+impl fmt::Display for SendingErrorCause {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &SendingErrorCause::SerializationError(ref error) => write!(f, "serialization error: {}", error),
+            &SendingErrorCause::IoError(ref error) => write!(f, "IO Error: {}", error),
+        }
+    }
 }
 
 #[derive(Debug)]
 struct SendingError {
-    operation: MessagingOperationKind
+    cause: SendingErrorCause
+}
+
+impl Error for SendingError {
+    fn description(&self) -> &str {
+        "failed to send message"
+    }
+}
+
+impl fmt::Display for SendingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to send message caused by: {}", self.cause)
+    }
 }
 
 impl<T: SerDeMessage + Debug> From<SerializationError<T>> for SendingError {
     fn from(error: SerializationError<T>) -> SendingError {
-        SendingError { operation: MessagingOperationKind::Serialization(error.cause) }
+        SendingError { cause: SendingErrorCause::SerializationError(error.cause) }
     }
 }
 
 impl From<IoError> for SendingError {
     fn from(error: IoError) -> SendingError {
-        SendingError { operation: MessagingOperationKind::Sending(error) }
+        SendingError { cause: SendingErrorCause::IoError(error) }
     }
 }
 
@@ -153,10 +169,28 @@ pub enum DataType {
     MessageHeader
 }
 
+impl ToString for DataType {
+     fn to_string(&self) -> String {
+        match self {
+            &DataType::RawDataPoint => "RawDataPoint".to_string(),
+            &DataType::MessageHeader => "MessageHeader".to_string(),
+        }
+     }
+}
+
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Encoding {
     Capnp,
     Plain
+}
+
+impl ToString for Encoding {
+     fn to_string(&self) -> String {
+         match self {
+             &Encoding::Capnp => "capnp".to_string(),
+             &Encoding::Plain => "plain".to_string(),
+         }
+     }
 }
 
 pub trait SerDeMessage {
@@ -308,14 +342,8 @@ pub struct MessageHeader {
 
 impl SerDeMessage for MessageHeader {
     fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
-        let encoding = match self.encoding {
-            Encoding::Capnp => "capnp",
-            Encoding::Plain => "plain",
-        };
-        let data_type = match self.data_type {
-            DataType::RawDataPoint => "RawDataPoint",
-            DataType::MessageHeader => "MessageHeader"
-        };
+        let encoding = self.encoding.to_string();
+        let data_type = self.data_type.to_string();
         Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
     }
 
@@ -337,6 +365,7 @@ impl SerDeMessage for MessageHeader {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => match &*string {
                             "RawDataPoint" => DataType::RawDataPoint,
+                            // TODO: move this to error type!
                             _ => return Err(DeserializationError::new(&*format!("unknown data type: {}", string)))
                         },
                         Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding data type string: {}", utf8_error)))
@@ -485,6 +514,7 @@ mod test {
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
+                        // TODO: how do I test Dispaly output?
                         assert_eq!(err.description(), "no encoding found in message header");
                     }
                     {
