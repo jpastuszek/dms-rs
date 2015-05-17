@@ -1,4 +1,9 @@
 use std::borrow::ToOwned;
+use std::marker::PhantomData;
+use std::fmt::Debug;
+use std::io::Error as IoError;
+use std::fmt;
+use std::error::Error;
 use chrono::*;
 use nanomsg::Socket;
 use capnp::serialize_packed;
@@ -7,68 +12,163 @@ use capnp::message::ReaderOptions;
 use capnp::io::OutputStream;
 use capnp::io::ArrayInputStream;
 use capnp::Error as CapnpError;
-use std::io::Error as IoError;
-use std::fmt;
-use std::error::Error;
 
 #[derive(Debug)]
-enum MessagingError {
+enum SerDeErrorCause {
     CapnpError(CapnpError),
     IoError(IoError),
-    Internal(String)
+    Other(String),
+    EncodingNotImplemented(Encoding),
 }
 
-impl Error for MessagingError {
+impl Error for SerDeErrorCause {
     fn description(&self) -> &str {
         match self {
-            &MessagingError::CapnpError(ref err) => err.description(),
-            &MessagingError::IoError(ref err) => err.description(),
-            &MessagingError::Internal(ref err) => &err,
+            &SerDeErrorCause::CapnpError(ref err) => err.description(),
+            &SerDeErrorCause::IoError(ref err) => err.description(),
+            &SerDeErrorCause::Other(ref msg) => &msg,
+            &SerDeErrorCause::EncodingNotImplemented(ref encoding) => "encoding not implemented",
         }
     }
 }
 
-impl MessagingError {
-    fn new(msg: &str) -> MessagingError {
-        MessagingError::Internal(msg.to_owned())
-    }
-}
-
-impl fmt::Display for MessagingError {
+impl fmt::Display for SerDeErrorCause {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "messaging error: {}", self.description())
+        // TODO: per type msg
+        write!(f, "caused by: {}", self.description())
     }
 }
 
-impl From<CapnpError> for MessagingError {
-    fn from(error: CapnpError) -> MessagingError {
-        MessagingError::CapnpError(error)
+#[derive(Debug)]
+struct DeserializationError<T> where T: SerDeMessage + Debug {
+    pub cause: SerDeErrorCause,
+    phantom: PhantomData<T>
+}
+
+#[derive(Debug)]
+struct SerializationError<T> where T: SerDeMessage + Debug {
+    pub cause: SerDeErrorCause,
+    phantom: PhantomData<T>
+}
+
+impl<T: SerDeMessage + Debug> SerializationError<T> {
+    fn not_implemented(encoding: Encoding) -> SerializationError<T> {
+        SerializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), phantom: PhantomData }
     }
 }
 
-impl From<IoError> for MessagingError {
-    fn from(error: IoError) -> MessagingError {
-        MessagingError::IoError(error)
+impl<T: SerDeMessage + Debug> DeserializationError<T> {
+    fn not_implemented(encoding: Encoding) -> DeserializationError<T> {
+        DeserializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), phantom: PhantomData }
     }
 }
+
+impl<T: SerDeMessage + Debug> Error for DeserializationError<T> {
+    fn description(&self) -> &str {
+        "deserialization error"
+    }
+}
+
+impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
+    fn description(&self) -> &str {
+        "serialization error"
+    }
+}
+
+impl<T: SerDeMessage + Debug> fmt::Display for DeserializationError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to deserializae message for type {:?}: {}", T::data_type(), self.cause)
+    }
+}
+
+impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Failed to serialize message for type {:?}: {}", T::data_type(), self.cause)
+    }
+}
+
+impl<T: SerDeMessage + Debug> DeserializationError<T> {
+    fn new(msg: &str) -> DeserializationError<T> {
+        DeserializationError { cause: SerDeErrorCause::Other(msg.to_owned()), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> SerializationError<T> {
+    fn new(msg: &str) -> SerializationError<T> {
+        SerializationError { cause: SerDeErrorCause::Other(msg.to_owned()), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
+    fn from(error: CapnpError) -> DeserializationError<T> {
+        DeserializationError { cause: SerDeErrorCause::CapnpError(error), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<IoError> for DeserializationError<T> {
+    fn from(error: IoError) -> DeserializationError<T> {
+        DeserializationError { cause: SerDeErrorCause::IoError(error), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
+    fn from(error: CapnpError) -> SerializationError<T> {
+        SerializationError { cause: SerDeErrorCause::CapnpError(error), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
+    fn from(error: IoError) -> SerializationError<T> {
+        SerializationError { cause: SerDeErrorCause::IoError(error), phantom: PhantomData }
+    }
+}
+
+#[derive(Debug)]
+enum MessagingOperationKind {
+    Serialization(SerDeErrorCause), // Also type?
+    Sending(IoError)
+}
+
+#[derive(Debug)]
+struct SendingError {
+    operation: MessagingOperationKind
+}
+
+impl<T: SerDeMessage + Debug> From<SerializationError<T>> for SendingError {
+    fn from(error: SerializationError<T>) -> SendingError {
+        SendingError { operation: MessagingOperationKind::Serialization(error.cause) }
+    }
+}
+
+impl From<IoError> for SendingError {
+    fn from(error: IoError) -> SendingError {
+        SendingError { operation: MessagingOperationKind::Sending(error) }
+    }
+}
+
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum DataType {
-    RawDataPoint
+    RawDataPoint,
+    MessageHeader
 }
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Encoding {
-    Capnp
+    Capnp,
+    Plain
 }
 
 pub trait SerDeMessage {
-    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, MessagingError>;
+    //type SerializationError = SerializationError<Self>;
+    //type DeserializationError = DeserializationError<Self>;
+
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>>;
     fn data_type() -> DataType;
     fn version() -> u8 {
         0
     }
-    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, MessagingError>;
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>>;
 }
 
 #[derive(Debug)]
@@ -90,7 +190,7 @@ pub struct RawDataPoint {
 }
 
 impl SerDeMessage for RawDataPoint {
-    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, MessagingError> {
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
         match encoding {
             Encoding::Capnp => {
                 let mut message = MallocMessageBuilder::new_default();
@@ -134,9 +234,13 @@ impl SerDeMessage for RawDataPoint {
                     },
                     Err(error) => {
                         error!("Failed to serialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                        return Err(MessagingError::from(error));
+                        return Err(SerializationError::from(error));
                     }
                 }
+            },
+            Encoding::Plain => {
+                warn!("Plain endocing is not implemented for data types");
+                Err(SerializationError::not_implemented(Encoding::Plain))
             }
         }
     }
@@ -146,41 +250,37 @@ impl SerDeMessage for RawDataPoint {
         DataType::RawDataPoint
     }
 
-    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, MessagingError> {
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
         match encoding {
             Encoding::Capnp => {
                 let reader = try!(serialize_packed::new_reader_unbuffered(ArrayInputStream::new(bytes), ReaderOptions::new()));
-                let result = reader.get_root::<super::raw_data_point_capnp::raw_data_point::Reader>();
+                let raw_data_point = try!(reader.get_root::<super::raw_data_point_capnp::raw_data_point::Reader>());
 
-                match result {
-                    Ok(reader) => {
-                        Ok(
-                            RawDataPoint {
-                                location: match reader.get_location() {
-                                    Ok(value) => value.to_string(),
-                                    Err(error) => {
-                                        error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                                        return Err(MessagingError::from(error))
-                                    }
-                                },
-                                path: match reader.get_path() {
-                                    Ok(value) => value.to_string(),
-                                    Err(error) => {
-                                        error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                                        return Err(MessagingError::from(error))
-                                    }
-                                },
-                                component: "iowait".to_string(),
-                                timestamp: UTC::now(),
-                                value: DataValue::Float(0.2)
+                Ok(
+                    RawDataPoint {
+                        location: match raw_data_point.get_location() {
+                            Ok(value) => value.to_string(),
+                            Err(error) => {
+                                error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                                return Err(DeserializationError::from(error))
                             }
-                        )
-                    },
-                    Err(error) => {
-                        error!("Failed to deserialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                        Err(MessagingError::from(error))
+                        },
+                        path: match raw_data_point.get_path() {
+                            Ok(value) => value.to_string(),
+                            Err(error) => {
+                                error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
+                                return Err(DeserializationError::from(error))
+                            }
+                        },
+                        component: "iowait".to_string(),
+                        timestamp: UTC::now(),
+                        value: DataValue::Float(0.2)
                     }
-                }
+                )
+            },
+            Encoding::Plain => {
+                warn!("Plain endocing is not implemented for data types");
+                Err(DeserializationError::not_implemented(Encoding::Plain))
             }
         }
     }
@@ -206,8 +306,25 @@ pub struct MessageHeader {
     encoding: Encoding,
 }
 
-impl MessageHeader {
-    fn from_bytes(bytes: Vec<u8>) -> Result<MessageHeader, MessagingError> {
+impl SerDeMessage for MessageHeader {
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
+        let encoding = match self.encoding {
+            Encoding::Capnp => "capnp",
+            Encoding::Plain => "plain",
+        };
+        let data_type = match self.data_type {
+            DataType::RawDataPoint => "RawDataPoint",
+            DataType::MessageHeader => "MessageHeader"
+        };
+        Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
+    }
+
+    fn data_type() -> DataType {
+        DataType::MessageHeader
+    }
+
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
+        // TODO: don't ignore encoding
         let splits = bytes.split(|byte| *byte == '\n' as u8);
         let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
 
@@ -220,43 +337,43 @@ impl MessageHeader {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => match &*string {
                             "RawDataPoint" => DataType::RawDataPoint,
-                            _ => return Err(MessagingError::new(&*format!("unknown data type: {}", string)))
+                            _ => return Err(DeserializationError::new(&*format!("unknown data type: {}", string)))
                         },
-                        Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding data type string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding data type string: {}", utf8_error)))
                     },
-                    None => return Err(MessagingError::new("no data type found in message header"))
+                    None => return Err(DeserializationError::new("no data type found in message header"))
                 };
                 topic = match splits.next() {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => string,
-                        Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding topic string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding topic string: {}", utf8_error)))
                     },
-                    None => return Err(MessagingError::new("no topic found in message header"))
+                    None => return Err(DeserializationError::new("no topic found in message header"))
                 };
             },
-            None => return Err(MessagingError::new("no data type/topic part found in message header"))
+            None => return Err(DeserializationError::new("no data type/topic part found in message header"))
         };
 
         let version = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match string.parse::<u8>() {
                     Ok(int) => int,
-                    Err(parse_error) => return Err(MessagingError::new(&*format!("message version is not u8 number: {}", parse_error)))
+                    Err(parse_error) => return Err(DeserializationError::new(&*format!("message version is not u8 number: {}", parse_error)))
                 },
-                Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding version string: {}", utf8_error)))
+                Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding version string: {}", utf8_error)))
             },
-            None => return Err(MessagingError::new("no version found in message header"))
+            None => return Err(DeserializationError::new("no version found in message header"))
         };
 
         let encoding = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match &*string {
                     "capnp" => Encoding::Capnp,
-                    _ => return Err(MessagingError::new(&*format!("unknown encoding: {}", string)))
+                    _ => return Err(DeserializationError::new(&*format!("unknown encoding: {}", string)))
                 },
-                Err(utf8_error) => return Err(MessagingError::new(&*format!("error decoding encoding string: {}", utf8_error)))
+                Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding encoding string: {}", utf8_error)))
             },
-            None => return Err(MessagingError::new("no encoding found in message header"))
+            None => return Err(DeserializationError::new("no encoding found in message header"))
         };
 
         for part in parts {
@@ -270,25 +387,15 @@ impl MessageHeader {
             encoding: encoding
         })
     }
-
-    fn to_bytes(&self) -> Vec<u8> {
-        let encoding = match self.encoding {
-            Encoding::Capnp => "capnp"
-        };
-        let data_type = match self.data_type {
-            DataType::RawDataPoint => "RawDataPoint"
-        };
-        format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes()
-    }
 }
 
-pub trait SendMessage<T> {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError> where T: SerDeMessage;
+pub trait SendMessage<T: SerDeMessage + Debug> {
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), SendingError>;
 }
 
-impl<T> SendMessage<T> for Socket {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError>
-        where T: SerDeMessage {
+impl<T: SerDeMessage + Debug> SendMessage<T> for Socket {
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), SendingError>
+        where T: SerDeMessage + Debug {
         let mut data: Vec<u8>;
 
         let header = MessageHeader {
@@ -297,21 +404,15 @@ impl<T> SendMessage<T> for Socket {
             version: T::version(),
             encoding: encoding
         };
-        data = header.to_bytes();
+        data = try!(header.to_bytes(Encoding::Plain));
 
         let body = try!(message.to_bytes(encoding));
 
         data.extend(body);
 
         debug!("Sending message with {:?} on topic {}", T::data_type(), header.topic);
-        match self.write(&data) {
-            Ok(_) => trace!("Message sent"),
-            Err(error) => {
-                error!("Failed to send message: {}", error);
-                return Err(MessagingError::from(error));
-            }
-        };
-
+        try!(self.write(&data));
+        trace!("Message sent");
         Ok(())
     }
 }
@@ -341,7 +442,7 @@ mod test {
                 encoding: Encoding::Capnp
             };
 
-            let bytes = header.to_bytes();
+            let bytes = header.to_bytes(Encoding::Plain).unwrap();
             assert_eq!(bytes, "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes());
         }
 
@@ -349,7 +450,7 @@ mod test {
             it "should deserialize correctly formated message header" {
                 let bytes = "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes();
 
-                let header = MessageHeader::from_bytes(bytes).unwrap();
+                let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
                 assert_eq!(header.data_type, DataType::RawDataPoint);
                 assert_eq!(header.topic, "hello".to_string());
                 assert_eq!(header.version, 42);
@@ -359,7 +460,7 @@ mod test {
             it "should deserialize message with empty topic" {
                 let bytes = "RawDataPoint/\n42\ncapnp\n\n".to_string().into_bytes();
 
-                let header = MessageHeader::from_bytes(bytes).unwrap();
+                let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
                 assert_eq!(header.data_type, DataType::RawDataPoint);
                 assert_eq!(header.topic, "".to_string());
                 assert_eq!(header.version, 42);
@@ -369,7 +470,7 @@ mod test {
             it "should deserialize message with extra sections" {
                 let bytes = "RawDataPoint/\n42\ncapnp\nblah\n\n".to_string().into_bytes();
 
-                let header = MessageHeader::from_bytes(bytes).unwrap();
+                let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
                 assert_eq!(header.data_type, DataType::RawDataPoint);
                 assert_eq!(header.topic, "".to_string());
                 assert_eq!(header.version, 42);
@@ -381,7 +482,7 @@ mod test {
                     {
                         let bytes = "RawDataPoint/hello\n42\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert_eq!(err.description(), "no encoding found in message header");
@@ -389,7 +490,7 @@ mod test {
                     {
                         let bytes = "RawDataPoint/hello\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert_eq!(err.description(), "no version found in message header");
@@ -397,7 +498,7 @@ mod test {
                     {
                         let bytes = "RawDataPoint\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert_eq!(err.description(), "no topic found in message header");
@@ -405,7 +506,7 @@ mod test {
                     {
                         let bytes = "\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert_eq!(err.description(), "no data type/topic part found in message header");
@@ -416,7 +517,7 @@ mod test {
                     {
                         let bytes = "RawDataPoint/hello\n-1\ncapnp\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert!(err.description().starts_with("message version is not u8 number"));
@@ -424,7 +525,7 @@ mod test {
                     {
                         let bytes = "RawDataPoint/hello\n300\ncapnp\n\n".to_string().into_bytes();
 
-                        let result = MessageHeader::from_bytes(bytes);
+                        let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
                         assert!(err.description().starts_with("message version is not u8 number"));
@@ -434,7 +535,7 @@ mod test {
                 it "should provide error when unknown encoding was found in the message" {
                     let bytes = "RawDataPoint/hello\n42\ncapn planet\n\n".to_string().into_bytes();
 
-                    let result = MessageHeader::from_bytes(bytes);
+                    let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                     assert!(result.is_err());
                     let err = result.unwrap_err();
                     assert!(err.description().starts_with("unknown encoding: capn planet"));
