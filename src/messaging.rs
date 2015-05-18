@@ -37,24 +37,26 @@ impl Display for SerDeErrorCause {
 #[derive(Debug)]
 struct DeserializationError<T> where T: SerDeMessage + Debug {
     pub cause: SerDeErrorCause,
+    pub data_type: DataType,
     phantom: PhantomData<T>
 }
 
 #[derive(Debug)]
 struct SerializationError<T> where T: SerDeMessage + Debug {
     pub cause: SerDeErrorCause,
+    pub data_type: DataType,
     phantom: PhantomData<T>
 }
 
 impl<T: SerDeMessage + Debug> SerializationError<T> {
     fn not_implemented(encoding: Encoding) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), phantom: PhantomData }
+        SerializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> DeserializationError<T> {
     fn not_implemented(encoding: Encoding) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), phantom: PhantomData }
+        DeserializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
@@ -72,62 +74,62 @@ impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
 
 impl<T: SerDeMessage + Debug> fmt::Display for DeserializationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to deserializae message for type {:?}: {}", T::data_type(), self.cause)
+        write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.cause)
     }
 }
 
 impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to serialize message for type {:?}: {}", T::data_type(), self.cause)
+        write!(f, "failed to serialize message for type {:?}: {}", T::data_type(), self.cause)
     }
 }
 
 impl<T: SerDeMessage + Debug> DeserializationError<T> {
     fn new(msg: &str) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::Other(msg.to_owned()), phantom: PhantomData }
+        DeserializationError { cause: SerDeErrorCause::Other(msg.to_owned()), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> SerializationError<T> {
     fn new(msg: &str) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::Other(msg.to_owned()), phantom: PhantomData }
+        SerializationError { cause: SerDeErrorCause::Other(msg.to_owned()), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
     fn from(error: CapnpError) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::CapnpError(error), phantom: PhantomData }
+        DeserializationError { cause: SerDeErrorCause::CapnpError(error), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<IoError> for DeserializationError<T> {
     fn from(error: IoError) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::IoError(error), phantom: PhantomData }
+        DeserializationError { cause: SerDeErrorCause::IoError(error), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
     fn from(error: CapnpError) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::CapnpError(error), phantom: PhantomData }
+        SerializationError { cause: SerDeErrorCause::CapnpError(error), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
     fn from(error: IoError) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::IoError(error), phantom: PhantomData }
+        SerializationError { cause: SerDeErrorCause::IoError(error), data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 #[derive(Debug)]
 enum SendingErrorCause {
-    SerializationError(SerDeErrorCause),
+    SerializationError(DataType, SerDeErrorCause),
     IoError(IoError)
 }
 
 impl fmt::Display for SendingErrorCause {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SendingErrorCause::SerializationError(ref error) => write!(f, "serialization error: {}", error),
+            &SendingErrorCause::SerializationError(ref data_type, ref error) => write!(f, "serialization error for {:?}: {}", data_type, error),
             &SendingErrorCause::IoError(ref error) => write!(f, "IO Error: {}", error),
         }
     }
@@ -146,13 +148,13 @@ impl Error for SendingError {
 
 impl fmt::Display for SendingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Failed to send message caused by: {}", self.cause)
+        write!(f, "failed to send message caused by: {}", self.cause)
     }
 }
 
 impl<T: SerDeMessage + Debug> From<SerializationError<T>> for SendingError {
     fn from(error: SerializationError<T>) -> SendingError {
-        SendingError { cause: SendingErrorCause::SerializationError(error.cause) }
+        SendingError { cause: SendingErrorCause::SerializationError(error.data_type, error.cause) }
     }
 }
 
@@ -514,6 +516,8 @@ mod test {
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                         assert!(result.is_err());
                         let err = result.unwrap_err();
+
+                        println!("{}", err);
                         // TODO: how do I test Dispaly output?
                         assert_eq!(err.description(), "no encoding found in message header");
                     }
