@@ -34,6 +34,15 @@ impl Display for SerDeErrorCause {
     }
 }
 
+// TODO:
+// * do I need Error trait for DeserializationError<T> - used in tests; used internally as error
+// but never exposed directly due to being templated by data type
+// * how do I data_type based on the object T itself? (reflection?) - no; there is reflection
+// (unstable) but more for Any type support and testing if types equal or not
+// * can I deduplicate code for DeserializationError<T>/SerializationError<T>
+//  * common trait - I need a solid type for From to work with; I could use default impl
+// * how can I separete encodings for header from encodings for data type
+
 #[derive(Debug)]
 struct DeserializationError<T> where T: SerDeMessage + Debug {
     pub cause: SerDeErrorCause,
@@ -46,18 +55,6 @@ struct SerializationError<T> where T: SerDeMessage + Debug {
     pub cause: SerDeErrorCause,
     pub data_type: DataType,
     phantom: PhantomData<T>
-}
-
-impl<T: SerDeMessage + Debug> SerializationError<T> {
-    fn not_implemented(encoding: Encoding) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), data_type: T::data_type(), phantom: PhantomData }
-    }
-}
-
-impl<T: SerDeMessage + Debug> DeserializationError<T> {
-    fn not_implemented(encoding: Encoding) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::EncodingNotImplemented(encoding), data_type: T::data_type(), phantom: PhantomData }
-    }
 }
 
 impl<T: SerDeMessage + Debug> Error for DeserializationError<T> {
@@ -86,37 +83,49 @@ impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
 
 impl<T: SerDeMessage + Debug> DeserializationError<T> {
     fn new(msg: &str) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::Other(msg.to_owned()), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::Other(msg.to_owned()))
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<SerDeErrorCause> for DeserializationError<T> {
+    fn from(cause: SerDeErrorCause) -> DeserializationError<T> {
+        DeserializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<SerDeErrorCause> for SerializationError<T> {
+    fn from(cause: SerDeErrorCause) -> SerializationError<T> {
+        SerializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> SerializationError<T> {
     fn new(msg: &str) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::Other(msg.to_owned()), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::Other(msg.to_owned()))
     }
 }
 
 impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
     fn from(error: CapnpError) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::CapnpError(error), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::CapnpError(error))
     }
 }
 
 impl<T: SerDeMessage + Debug> From<IoError> for DeserializationError<T> {
     fn from(error: IoError) -> DeserializationError<T> {
-        DeserializationError { cause: SerDeErrorCause::IoError(error), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::IoError(error))
     }
 }
 
 impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
     fn from(error: CapnpError) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::CapnpError(error), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::CapnpError(error))
     }
 }
 
 impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
     fn from(error: IoError) -> SerializationError<T> {
-        SerializationError { cause: SerDeErrorCause::IoError(error), data_type: T::data_type(), phantom: PhantomData }
+        From::from(SerDeErrorCause::IoError(error))
     }
 }
 
@@ -276,7 +285,7 @@ impl SerDeMessage for RawDataPoint {
             },
             Encoding::Plain => {
                 warn!("Plain endocing is not implemented for data types");
-                Err(SerializationError::not_implemented(Encoding::Plain))
+                Err(From::from(SerDeErrorCause::EncodingNotImplemented(Encoding::Plain)))
             }
         }
     }
@@ -316,7 +325,7 @@ impl SerDeMessage for RawDataPoint {
             },
             Encoding::Plain => {
                 warn!("Plain endocing is not implemented for data types");
-                Err(DeserializationError::not_implemented(Encoding::Plain))
+                Err(From::from(SerDeErrorCause::EncodingNotImplemented(Encoding::Plain)))
             }
         }
     }
