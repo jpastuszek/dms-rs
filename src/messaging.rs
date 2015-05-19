@@ -53,11 +53,11 @@ impl Display for SerDeErrorKind {
 //  * common trait - I need a solid type for From to work with; I could use default impl - won't
 //  work since I cannot implement not mine trait (From) to potentially not mine object T: MyTrait
 // * how can I separete encodings for header from encodings for data type
-// * should I use from(Cause::Enum) or new(Cause::Enum) for internal errors? - new sounds better
+// * should I use from(kind::Enum) or new(kind::Enum) for internal errors? - new sounds better
 
 #[derive(Debug)]
 struct DeserializationError<T> where T: SerDeMessage + Debug {
-    pub cause: SerDeErrorKind,
+    pub kind: SerDeErrorKind,
     pub data_type: DataType,
     phantom: PhantomData<T>
 }
@@ -70,25 +70,25 @@ impl<T: SerDeMessage + Debug> Error for DeserializationError<T> {
 
 impl<T: SerDeMessage + Debug> fmt::Display for DeserializationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.cause)
+        write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.kind)
     }
 }
 
 impl<T: SerDeMessage + Debug> DeserializationError<T> {
-    fn new(cause: SerDeErrorKind) -> DeserializationError<T> {
-        DeserializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
+    fn new(kind: SerDeErrorKind) -> DeserializationError<T> {
+        DeserializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for DeserializationError<T> {
-    fn from(cause: SerDeErrorKind) -> DeserializationError<T> {
-        DeserializationError::new(cause)
+    fn from(kind: SerDeErrorKind) -> DeserializationError<T> {
+        DeserializationError::new(kind)
     }
 }
 
 #[derive(Debug)]
 struct SerializationError<T> where T: SerDeMessage + Debug {
-    pub cause: SerDeErrorKind,
+    pub kind: SerDeErrorKind,
     pub data_type: DataType,
     phantom: PhantomData<T>
 }
@@ -101,19 +101,19 @@ impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
 
 impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to serialize message for type {:?}: {}", T::data_type(), self.cause)
+        write!(f, "failed to serialize message for type {:?}: {}", T::data_type(), self.kind)
     }
 }
 
 impl<T: SerDeMessage + Debug> SerializationError<T> {
-    fn new(cause: SerDeErrorKind) -> SerializationError<T> {
-        SerializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
+    fn new(kind: SerDeErrorKind) -> SerializationError<T> {
+        SerializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for SerializationError<T> {
-    fn from(cause: SerDeErrorKind) -> SerializationError<T> {
-        SerializationError::new(cause)
+    fn from(kind: SerDeErrorKind) -> SerializationError<T> {
+        SerializationError::new(kind)
     }
 }
 
@@ -157,23 +157,25 @@ impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
 }
 
 #[derive(Debug)]
-enum SendingErrorCause {
+enum SendingErrorKind {
     SerializationError(DataType, SerDeErrorKind),
     IoError(IoError)
 }
 
-impl fmt::Display for SendingErrorCause {
+impl fmt::Display for SendingErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SendingErrorCause::SerializationError(ref data_type, ref error) => write!(f, "serialization error for {:?}: {}", data_type, error),
-            &SendingErrorCause::IoError(ref error) => write!(f, "IO Error: {}", error),
+            &SendingErrorKind::SerializationError(ref data_type, ref error) => write!(f, "serialization error for {:?}: {}", data_type, error),
+            &SendingErrorKind::IoError(ref error) => write!(f, "IO Error: {}", error),
         }
     }
 }
 
+// TODO: add Error::cause support?
+
 #[derive(Debug)]
 struct SendingError {
-    cause: SendingErrorCause
+    kind: SendingErrorKind
 }
 
 impl Error for SendingError {
@@ -184,19 +186,25 @@ impl Error for SendingError {
 
 impl fmt::Display for SendingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to send message caused by: {}", self.cause)
+        write!(f, "failed to send message caused by: {}", self.kind)
+    }
+}
+
+impl SendingError {
+    fn new(kind: SendingErrorKind) -> SendingError {
+        SendingError { kind: kind }
     }
 }
 
 impl<T: SerDeMessage + Debug> From<SerializationError<T>> for SendingError {
     fn from(error: SerializationError<T>) -> SendingError {
-        SendingError { cause: SendingErrorCause::SerializationError(error.data_type, error.cause) }
+        SendingError::new(SendingErrorKind::SerializationError(error.data_type, error.kind))
     }
 }
 
 impl From<IoError> for SendingError {
     fn from(error: IoError) -> SendingError {
-        SendingError { cause: SendingErrorCause::IoError(error) }
+        SendingError::new(SendingErrorKind::IoError(error))
     }
 }
 
