@@ -2,9 +2,11 @@ use std::borrow::ToOwned;
 use std::marker::PhantomData;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::io::Error as IoError;
-use std::fmt;
 use std::error::Error;
+use std::io::Error as IoError;
+use std::string::FromUtf8Error;
+use std::num::ParseIntError;
+use std::fmt;
 use std::string::ToString;
 use chrono::*;
 use nanomsg::Socket;
@@ -16,20 +18,28 @@ use capnp::io::ArrayInputStream;
 use capnp::Error as CapnpError;
 
 #[derive(Debug)]
-enum SerDeErrorCause {
+enum SerDeErrorKind {
     CapnpError(CapnpError),
     IoError(IoError),
-    Other(String),
     EncodingNotImplemented(Encoding),
+    UnknownEncoding(String),
+    UnknownDataType(String),
+    FromUtf8Error(&'static str, FromUtf8Error),
+    MissingField(&'static str),
+    InvalidVersionNumber(ParseIntError),
 }
 
-impl Display for SerDeErrorCause {
+impl Display for SerDeErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SerDeErrorCause::CapnpError(ref error) => write!(f, "Cap'n Proto Error: {}", error),
-            &SerDeErrorCause::IoError(ref error) => write!(f, "IO Error: {}", error),
-            &SerDeErrorCause::Other(ref msg) => write!(f, "{}", msg),
-            &SerDeErrorCause::EncodingNotImplemented(ref enc) => write!(f, "encoding '{}' not implemented", enc.to_string()),
+            &SerDeErrorKind::CapnpError(ref error) => write!(f, "Cap'n Proto Error: {}", error),
+            &SerDeErrorKind::IoError(ref error) => write!(f, "IO Error: {}", error),
+            &SerDeErrorKind::EncodingNotImplemented(ref enc) => write!(f, "encoding '{}' not implemented", enc.to_string()),
+            &SerDeErrorKind::UnknownEncoding(ref enc) => write!(f, "unknown encoding: {}", enc),
+            &SerDeErrorKind::UnknownDataType(ref type_name) => write!(f, "unknown data type: {}", type_name),
+            &SerDeErrorKind::FromUtf8Error(ref field_name, ref error) => write!(f, "error decoding {} string: {}", field_name, error),
+            &SerDeErrorKind::MissingField(ref field_name) => write!(f, "no {} found in message header", field_name),
+            &SerDeErrorKind::InvalidVersionNumber(ref error) => write!(f, "message version is not u8 number: {}", error),
         }
     }
 }
@@ -40,19 +50,14 @@ impl Display for SerDeErrorCause {
 // * how do I data_type based on the object T itself? (reflection?) - no; there is reflection
 // (unstable) but more for Any type support and testing if types equal or not
 // * can I deduplicate code for DeserializationError<T>/SerializationError<T>
-//  * common trait - I need a solid type for From to work with; I could use default impl
+//  * common trait - I need a solid type for From to work with; I could use default impl - won't
+//  work since I cannot implement not mine trait (From) to potentially not mine object T: MyTrait
 // * how can I separete encodings for header from encodings for data type
+// * should I use from(Cause::Enum) or new(Cause::Enum) for internal errors? - new sounds better
 
 #[derive(Debug)]
 struct DeserializationError<T> where T: SerDeMessage + Debug {
-    pub cause: SerDeErrorCause,
-    pub data_type: DataType,
-    phantom: PhantomData<T>
-}
-
-#[derive(Debug)]
-struct SerializationError<T> where T: SerDeMessage + Debug {
-    pub cause: SerDeErrorCause,
+    pub cause: SerDeErrorKind,
     pub data_type: DataType,
     phantom: PhantomData<T>
 }
@@ -63,15 +68,34 @@ impl<T: SerDeMessage + Debug> Error for DeserializationError<T> {
     }
 }
 
-impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
-    fn description(&self) -> &str {
-        "serialization error"
-    }
-}
-
 impl<T: SerDeMessage + Debug> fmt::Display for DeserializationError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.cause)
+    }
+}
+
+impl<T: SerDeMessage + Debug> DeserializationError<T> {
+    fn new(cause: SerDeErrorKind) -> DeserializationError<T> {
+        DeserializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for DeserializationError<T> {
+    fn from(cause: SerDeErrorKind) -> DeserializationError<T> {
+        DeserializationError::new(cause)
+    }
+}
+
+#[derive(Debug)]
+struct SerializationError<T> where T: SerDeMessage + Debug {
+    pub cause: SerDeErrorKind,
+    pub data_type: DataType,
+    phantom: PhantomData<T>
+}
+
+impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
+    fn description(&self) -> &str {
+        "serialization error"
     }
 }
 
@@ -81,57 +105,60 @@ impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
     }
 }
 
-impl<T: SerDeMessage + Debug> DeserializationError<T> {
-    fn new(msg: &str) -> DeserializationError<T> {
-        From::from(SerDeErrorCause::Other(msg.to_owned()))
-    }
-}
-
-impl<T: SerDeMessage + Debug> From<SerDeErrorCause> for DeserializationError<T> {
-    fn from(cause: SerDeErrorCause) -> DeserializationError<T> {
-        DeserializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
-    }
-}
-
-impl<T: SerDeMessage + Debug> From<SerDeErrorCause> for SerializationError<T> {
-    fn from(cause: SerDeErrorCause) -> SerializationError<T> {
+impl<T: SerDeMessage + Debug> SerializationError<T> {
+    fn new(cause: SerDeErrorKind) -> SerializationError<T> {
         SerializationError { cause: cause, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
-impl<T: SerDeMessage + Debug> SerializationError<T> {
-    fn new(msg: &str) -> SerializationError<T> {
-        From::from(SerDeErrorCause::Other(msg.to_owned()))
+impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for SerializationError<T> {
+    fn from(cause: SerDeErrorKind) -> SerializationError<T> {
+        SerializationError::new(cause)
     }
 }
 
-impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
-    fn from(error: CapnpError) -> DeserializationError<T> {
-        From::from(SerDeErrorCause::CapnpError(error))
+// TODO: implement marker trait for both DeserializationError and SerializationError thich inherits
+// From<SerDeErrorKind> (needs to be implemented for both types) and define this as generic
+// impelemntation for types implementing this marker trait
+/*
+trait SerDeError: From<SerDeErrorKind> { }
+impl<T: SerDeMessage + Debug> SerDeError for DeserializationError<T> { }
+impl<T: SerDeMessage + Debug> SerDeError for SerializationError<T> { }
+impl<T> From<CapnpError> for T where T: SerDeError {
+    fn from(error: CapnpError) -> T {
+        T::from(SerDeErrorKind::CapnpError(error))
     }
 }
+error: type parameter `T` must be used as the type parameter for some local type (e.g. `MyStruct<T>`); only traits defined in the current crate can be implemented for a type parameter
+*/
 
 impl<T: SerDeMessage + Debug> From<IoError> for DeserializationError<T> {
     fn from(error: IoError) -> DeserializationError<T> {
-        From::from(SerDeErrorCause::IoError(error))
-    }
-}
-
-impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
-    fn from(error: CapnpError) -> SerializationError<T> {
-        From::from(SerDeErrorCause::CapnpError(error))
+        From::from(SerDeErrorKind::IoError(error))
     }
 }
 
 impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
     fn from(error: IoError) -> SerializationError<T> {
-        From::from(SerDeErrorCause::IoError(error))
+        From::from(SerDeErrorKind::IoError(error))
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
+    fn from(error: CapnpError) -> DeserializationError<T> {
+        From::from(SerDeErrorKind::CapnpError(error))
+    }
+}
+
+impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
+    fn from(error: CapnpError) -> SerializationError<T> {
+        From::from(SerDeErrorKind::CapnpError(error))
     }
 }
 
 #[derive(Debug)]
 enum SendingErrorCause {
-    SerializationError(DataType, SerDeErrorCause),
+    SerializationError(DataType, SerDeErrorKind),
     IoError(IoError)
 }
 
@@ -285,7 +312,7 @@ impl SerDeMessage for RawDataPoint {
             },
             Encoding::Plain => {
                 warn!("Plain endocing is not implemented for data types");
-                Err(From::from(SerDeErrorCause::EncodingNotImplemented(Encoding::Plain)))
+                Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))
             }
         }
     }
@@ -325,7 +352,7 @@ impl SerDeMessage for RawDataPoint {
             },
             Encoding::Plain => {
                 warn!("Plain endocing is not implemented for data types");
-                Err(From::from(SerDeErrorCause::EncodingNotImplemented(Encoding::Plain)))
+                Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))
             }
         }
     }
@@ -376,44 +403,43 @@ impl SerDeMessage for MessageHeader {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => match &*string {
                             "RawDataPoint" => DataType::RawDataPoint,
-                            // TODO: move this to error type!
-                            _ => return Err(DeserializationError::new(&*format!("unknown data type: {}", string)))
+                            _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
                         },
-                        Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding data type string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
                     },
-                    None => return Err(DeserializationError::new("no data type found in message header"))
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
                 };
                 topic = match splits.next() {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => string,
-                        Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding topic string: {}", utf8_error)))
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("topic", utf8_error)))
                     },
-                    None => return Err(DeserializationError::new("no topic found in message header"))
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
                 };
             },
-            None => return Err(DeserializationError::new("no data type/topic part found in message header"))
+            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
         };
 
         let version = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match string.parse::<u8>() {
                     Ok(int) => int,
-                    Err(parse_error) => return Err(DeserializationError::new(&*format!("message version is not u8 number: {}", parse_error)))
+                    Err(parse_error) => return Err(DeserializationError::new(SerDeErrorKind::InvalidVersionNumber(parse_error)))
                 },
-                Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding version string: {}", utf8_error)))
+                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("version", utf8_error)))
             },
-            None => return Err(DeserializationError::new("no version found in message header"))
+            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("version")))
         };
 
         let encoding = match parts.next() {
             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                 Ok(string) => match &*string {
                     "capnp" => Encoding::Capnp,
-                    _ => return Err(DeserializationError::new(&*format!("unknown encoding: {}", string)))
+                    _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
                 },
-                Err(utf8_error) => return Err(DeserializationError::new(&*format!("error decoding encoding string: {}", utf8_error)))
+                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
             },
-            None => return Err(DeserializationError::new("no encoding found in message header"))
+            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
         };
 
         for part in parts {
