@@ -57,62 +57,62 @@ impl Display for SerDeErrorKind {
 // * should I use from(kind::Enum) or new(kind::Enum) for internal errors? - new sounds better
 
 #[derive(Debug)]
-struct DeserializationError<T> where T: SerDeMessage + Debug {
+struct DeserializationError<T> where T: SerDeMessage {
     pub kind: SerDeErrorKind,
     pub data_type: DataType,
     phantom: PhantomData<T>
 }
 
-impl<T: SerDeMessage + Debug> Error for DeserializationError<T> {
+impl<T> Error for DeserializationError<T> where T: SerDeMessage {
     fn description(&self) -> &str {
         "deserialization error"
     }
 }
 
-impl<T: SerDeMessage + Debug> fmt::Display for DeserializationError<T> {
+impl<T> fmt::Display for DeserializationError<T> where T: SerDeMessage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.kind)
     }
 }
 
-impl<T: SerDeMessage + Debug> DeserializationError<T> {
+impl<T> DeserializationError<T> where T: SerDeMessage {
     fn new(kind: SerDeErrorKind) -> DeserializationError<T> {
         DeserializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
-impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for DeserializationError<T> {
+impl<T> From<SerDeErrorKind> for DeserializationError<T> where T: SerDeMessage {
     fn from(kind: SerDeErrorKind) -> DeserializationError<T> {
         DeserializationError::new(kind)
     }
 }
 
 #[derive(Debug)]
-struct SerializationError<T> where T: SerDeMessage + Debug {
+struct SerializationError<T> where T: SerDeMessage {
     pub kind: SerDeErrorKind,
     pub data_type: DataType,
     phantom: PhantomData<T>
 }
 
-impl<T: SerDeMessage + Debug> Error for SerializationError<T> {
+impl<T> Error for SerializationError<T> where T: SerDeMessage {
     fn description(&self) -> &str {
         "serialization error"
     }
 }
 
-impl<T: SerDeMessage + Debug> fmt::Display for SerializationError<T> {
+impl<T> fmt::Display for SerializationError<T> where T: SerDeMessage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "failed to serialize message for type {:?}: {}", T::data_type(), self.kind)
     }
 }
 
-impl<T: SerDeMessage + Debug> SerializationError<T> {
+impl<T> SerializationError<T> where T: SerDeMessage {
     fn new(kind: SerDeErrorKind) -> SerializationError<T> {
         SerializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
     }
 }
 
-impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for SerializationError<T> {
+impl<T> From<SerDeErrorKind> for SerializationError<T> where T: SerDeMessage {
     fn from(kind: SerDeErrorKind) -> SerializationError<T> {
         SerializationError::new(kind)
     }
@@ -123,8 +123,8 @@ impl<T: SerDeMessage + Debug> From<SerDeErrorKind> for SerializationError<T> {
 // impelemntation for types implementing this marker trait
 /*
 trait SerDeError: From<SerDeErrorKind> { }
-impl<T: SerDeMessage + Debug> SerDeError for DeserializationError<T> { }
-impl<T: SerDeMessage + Debug> SerDeError for SerializationError<T> { }
+impl<T: SerDeMessage > SerDeError for DeserializationError<T> { }
+impl<T: SerDeMessage > SerDeError for SerializationError<T> { }
 impl<T> From<CapnpError> for T where T: SerDeError {
     fn from(error: CapnpError) -> T {
         T::from(SerDeErrorKind::CapnpError(error))
@@ -133,25 +133,25 @@ impl<T> From<CapnpError> for T where T: SerDeError {
 error: type parameter `T` must be used as the type parameter for some local type (e.g. `MyStruct<T>`); only traits defined in the current crate can be implemented for a type parameter
 */
 
-impl<T: SerDeMessage + Debug> From<IoError> for DeserializationError<T> {
+impl<T> From<IoError> for DeserializationError<T> where T: SerDeMessage {
     fn from(error: IoError) -> DeserializationError<T> {
         From::from(SerDeErrorKind::IoError(error))
     }
 }
 
-impl<T: SerDeMessage + Debug> From<IoError> for SerializationError<T> {
+impl<T> From<IoError> for SerializationError<T> where T: SerDeMessage {
     fn from(error: IoError) -> SerializationError<T> {
         From::from(SerDeErrorKind::IoError(error))
     }
 }
 
-impl<T: SerDeMessage + Debug> From<CapnpError> for DeserializationError<T> {
+impl<T> From<CapnpError> for DeserializationError<T> where T: SerDeMessage {
     fn from(error: CapnpError) -> DeserializationError<T> {
         From::from(SerDeErrorKind::CapnpError(error))
     }
 }
 
-impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
+impl<T> From<CapnpError> for SerializationError<T> where T: SerDeMessage {
     fn from(error: CapnpError) -> SerializationError<T> {
         From::from(SerDeErrorKind::CapnpError(error))
     }
@@ -173,7 +173,7 @@ impl fmt::Display for MessagingErrorKind {
 }
 
 // TODO: add Error::cause support?
-trait MessagingDirection: MarkerTrait {
+trait MessagingDirection: MarkerTrait + Debug {
     fn direction_name() -> &'static str;
 }
 
@@ -201,7 +201,7 @@ struct MessagingError<D> where D: MessagingDirection {
     phantom: PhantomData<D>
 }
 
-impl<D> Error for MessagingError<D> where D: MessagingDirection + Debug {
+impl<D> Error for MessagingError<D> where D: MessagingDirection {
     fn description(&self) -> &str {
         "messaging error"
     }
@@ -219,7 +219,7 @@ impl<D> MessagingError<D> where D: MessagingDirection {
     }
 }
 
-impl<T: SerDeMessage + Debug, D> From<SerializationError<T>> for MessagingError<D> where D: MessagingDirection {
+impl<T, D> From<SerializationError<T>> for MessagingError<D> where D: MessagingDirection, T: SerDeMessage {
     fn from(error: SerializationError<T>) -> MessagingError<D> {
         MessagingError::new(MessagingErrorKind::SerializationError(error.data_type, error.kind))
     }
@@ -262,7 +262,7 @@ impl ToString for Encoding {
      }
 }
 
-pub trait SerDeMessage {
+pub trait SerDeMessage: Debug {
     //type SerializationError = SerializationError<Self>;
     //type DeserializationError = DeserializationError<Self>;
 
@@ -486,13 +486,13 @@ impl SerDeMessage for MessageHeader {
     }
 }
 
-pub trait SendMessage<T: SerDeMessage + Debug> {
+pub trait SendMessage<T> where T: SerDeMessage {
     fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>;
 }
 
-impl<T: SerDeMessage + Debug> SendMessage<T> for Socket {
+impl<T> SendMessage<T> for Socket where T: SerDeMessage {
     fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>
-        where T: SerDeMessage + Debug {
+        where T: SerDeMessage {
         let mut data: Vec<u8>;
 
         let header = MessageHeader {
