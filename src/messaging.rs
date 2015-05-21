@@ -1,5 +1,6 @@
 use std::borrow::ToOwned;
 use std::marker::PhantomData;
+use std::marker::MarkerTrait;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::error::Error;
@@ -157,54 +158,76 @@ impl<T: SerDeMessage + Debug> From<CapnpError> for SerializationError<T> {
 }
 
 #[derive(Debug)]
-enum SendingErrorKind {
+enum MessagingErrorKind {
     SerializationError(DataType, SerDeErrorKind),
     IoError(IoError)
 }
 
-impl fmt::Display for SendingErrorKind {
+impl fmt::Display for MessagingErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &SendingErrorKind::SerializationError(ref data_type, ref error) => write!(f, "serialization error for {:?}: {}", data_type, error),
-            &SendingErrorKind::IoError(ref error) => write!(f, "IO Error: {}", error),
+            &MessagingErrorKind::SerializationError(ref data_type, ref error) => write!(f, "serialization error for {:?}: {}", data_type, error),
+            &MessagingErrorKind::IoError(ref error) => write!(f, "IO Error: {}", error),
         }
     }
 }
 
 // TODO: add Error::cause support?
+trait MessagingDirection: MarkerTrait {
+    fn direction_name() -> &'static str;
+}
+
 
 #[derive(Debug)]
-struct SendingError {
-    kind: SendingErrorKind
+struct SendingDirection;
+#[derive(Debug)]
+struct ReceivingDirection;
+
+impl MessagingDirection for SendingDirection {
+    fn direction_name() -> &'static str {
+        "send"
+    }
 }
 
-impl Error for SendingError {
+impl MessagingDirection for ReceivingDirection {
+    fn direction_name() -> &'static str {
+        "receive"
+    }
+}
+
+#[derive(Debug)]
+struct MessagingError<D> where D: MessagingDirection {
+    kind: MessagingErrorKind,
+    phantom: PhantomData<D>
+}
+
+impl<D> Error for MessagingError<D> where D: MessagingDirection + Debug {
     fn description(&self) -> &str {
-        "failed to send message"
+        "messaging error"
     }
 }
 
-impl fmt::Display for SendingError {
+impl<D> fmt::Display for MessagingError<D> where D: MessagingDirection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to send message caused by: {}", self.kind)
+        write!(f, "failed to {} message caused by: {}", D::direction_name(), self.kind)
     }
 }
 
-impl SendingError {
-    fn new(kind: SendingErrorKind) -> SendingError {
-        SendingError { kind: kind }
+impl<D> MessagingError<D> where D: MessagingDirection {
+    fn new(kind: MessagingErrorKind) -> MessagingError<D> {
+        MessagingError { kind: kind, phantom: PhantomData }
     }
 }
 
-impl<T: SerDeMessage + Debug> From<SerializationError<T>> for SendingError {
-    fn from(error: SerializationError<T>) -> SendingError {
-        SendingError::new(SendingErrorKind::SerializationError(error.data_type, error.kind))
+impl<T: SerDeMessage + Debug, D> From<SerializationError<T>> for MessagingError<D> where D: MessagingDirection {
+    fn from(error: SerializationError<T>) -> MessagingError<D> {
+        MessagingError::new(MessagingErrorKind::SerializationError(error.data_type, error.kind))
     }
 }
 
-impl From<IoError> for SendingError {
-    fn from(error: IoError) -> SendingError {
-        SendingError::new(SendingErrorKind::IoError(error))
+impl<D> From<IoError> for MessagingError<D> where D: MessagingDirection {
+    fn from(error: IoError) -> MessagingError<D> {
+        MessagingError::new(MessagingErrorKind::IoError(error))
     }
 }
 
@@ -464,11 +487,11 @@ impl SerDeMessage for MessageHeader {
 }
 
 pub trait SendMessage<T: SerDeMessage + Debug> {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), SendingError>;
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>;
 }
 
 impl<T: SerDeMessage + Debug> SendMessage<T> for Socket {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), SendingError>
+    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>
         where T: SerDeMessage + Debug {
         let mut data: Vec<u8>;
 
