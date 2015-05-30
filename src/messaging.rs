@@ -1,4 +1,3 @@
-use std::borrow::ToOwned;
 use std::marker::PhantomData;
 use std::marker::MarkerTrait;
 use std::fmt::Debug;
@@ -411,9 +410,16 @@ pub struct MessageHeader {
 
 impl SerDeMessage for MessageHeader {
     fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
-        let encoding = self.encoding.to_string();
-        let data_type = self.data_type.to_string();
-        Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
+        match encoding {
+            Encoding::Plain => {
+                let encoding = self.encoding.to_string();
+                let data_type = self.data_type.to_string();
+                Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
+            },
+            _ => {
+                unimplemented!()
+            }
+        }
     }
 
     fn data_type() -> DataType {
@@ -421,68 +427,74 @@ impl SerDeMessage for MessageHeader {
     }
 
     fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
-        // TODO: don't ignore encoding
-        let splits = bytes.split(|byte| *byte == '\n' as u8);
-        let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
+        match encoding {
+            Encoding::Plain => {
+                let splits = bytes.split(|byte| *byte == '\n' as u8);
+                let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
 
-        let data_type;
-        let topic;
-        match parts.next() {
-            Some(dt_topic) => {
-                let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
-                data_type = match splits.next() {
+                let data_type;
+                let topic;
+                match parts.next() {
+                    Some(dt_topic) => {
+                        let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
+                        data_type = match splits.next() {
+                            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                                Ok(string) => match &*string {
+                                    "RawDataPoint" => DataType::RawDataPoint,
+                                    _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
+                                },
+                                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
+                            },
+                            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
+                        };
+                        topic = match splits.next() {
+                            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                                Ok(string) => string,
+                                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("topic", utf8_error)))
+                            },
+                            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
+                        };
+                    },
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type/topic")))
+                };
+
+                let version = match parts.next() {
+                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                        Ok(string) => match string.parse::<u8>() {
+                            Ok(int) => int,
+                            Err(parse_error) => return Err(DeserializationError::new(SerDeErrorKind::InvalidVersionNumber(parse_error)))
+                        },
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("version", utf8_error)))
+                    },
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("version")))
+                };
+
+                let encoding = match parts.next() {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
                         Ok(string) => match &*string {
-                            "RawDataPoint" => DataType::RawDataPoint,
-                            _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
+                            "capnp" => Encoding::Capnp,
+                            _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
                         },
-                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
                     },
-                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
                 };
-                topic = match splits.next() {
-                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                        Ok(string) => string,
-                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("topic", utf8_error)))
-                    },
-                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
+
+                for part in parts {
+                    warn!("found extra part in message header: {:?}", part);
                 };
+
+                Ok(MessageHeader {
+                    data_type: data_type,
+                    topic: topic,
+                    version: version,
+                    encoding: encoding
+                })
             },
-            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type/topic")))
-        };
-
-        let version = match parts.next() {
-            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                Ok(string) => match string.parse::<u8>() {
-                    Ok(int) => int,
-                    Err(parse_error) => return Err(DeserializationError::new(SerDeErrorKind::InvalidVersionNumber(parse_error)))
-                },
-                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("version", utf8_error)))
-            },
-            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("version")))
-        };
-
-        let encoding = match parts.next() {
-            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                Ok(string) => match &*string {
-                    "capnp" => Encoding::Capnp,
-                    _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
-                },
-                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
-            },
-            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
-        };
-
-        for part in parts {
-            warn!("found extra part in message header: {:?}", part);
-        };
-
-        Ok(MessageHeader {
-            data_type: data_type,
-            topic: topic,
-            version: version,
-            encoding: encoding
-        })
+            _ => {
+                unimplemented!()
+            }
+        }
     }
 }
 
@@ -532,12 +544,14 @@ mod test {
         include!("./schema/raw_data_point_capnp.rs");
     }
 
-    pub fn assert_error_display_message<T>(result: Result<T, Box<Error>>, msg: &str) -> () where T: Debug {
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        let mut message = String::new();
-        write!(&mut message, "{}", err).unwrap();
-        assert_eq!(message, msg);
+    macro_rules! assert_error_display_message {
+        ($result:expr, $msg:expr) => {{
+            assert!($result.is_err());
+            let err = $result.unwrap_err();
+            let mut message = String::new();
+            write!(&mut message, "{}", err).unwrap();
+            assert_eq!(message, $msg);
+        }}
     }
 
     describe! message_header {
@@ -588,61 +602,43 @@ mod test {
                 it "should provide error when not enought header sections are provided" {
                     {
                         let bytes = "RawDataPoint/hello\n42\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        //assert!(result.is_err());
-                        //let err = result.unwrap_err();
-                        //let mut message = String::new();
-                        //write!(&mut message, "{}", err).unwrap();
-                        //assert_eq!(message, "failed to deserializae message for type MessageHeader: no encoding found in message header");
-                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no encoding found in message header");
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: no encoding found in message header");
                     }
                     {
                         let bytes = "RawDataPoint/hello\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no version found in message header");
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: no version found in message header");
                     }
                     {
                         let bytes = "RawDataPoint\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no topic found in message header");
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: no topic found in message header");
                     }
                     {
                         let bytes = "\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no data type/topic found in message header");
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: no data type/topic found in message header");
                     }
                 }
 
                 it "should provide error when version is not a positive integer" {
                     {
                         let bytes = "RawDataPoint/hello\n-1\ncapnp\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-                        assert!(err.description().starts_with("message version is not u8 number"));
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: message version is not u8 number: invalid digit found in string");
                     }
                     {
                         let bytes = "RawDataPoint/hello\n300\ncapnp\n\n".to_string().into_bytes();
-
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-                        assert!(err.description().starts_with("message version is not u8 number"));
+                        assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: message version is not u8 number: number too large to fit in target type");
                     }
                 }
 
                 it "should provide error when unknown encoding was found in the message" {
                     let bytes = "RawDataPoint/hello\n42\ncapn planet\n\n".to_string().into_bytes();
-
                     let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                    assert!(result.is_err());
-                    let err = result.unwrap_err();
-                    assert!(err.description().starts_with("unknown encoding: capn planet"));
+                    assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: unknown encoding: capn planet");
                 }
             }
         }
