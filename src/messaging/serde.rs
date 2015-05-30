@@ -190,4 +190,3 @@ pub trait SerDeMessage: Debug {
     fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>>;
 }
 
-

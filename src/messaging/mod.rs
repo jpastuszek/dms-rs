@@ -8,7 +8,9 @@ use std::fmt;
 use std::string::ToString;
 use nanomsg::Socket;
 use std::io::Write;
-use self::serde::*;
+
+pub use self::serde::*;
+pub use self::data_types::*;
 
 pub mod serde;
 pub mod data_types;
@@ -215,8 +217,6 @@ impl<T> SendMessage<T> for Socket where T: SerDeMessage {
 #[cfg(test)]
 mod test {
     pub use super::*;
-    pub use super::data_types::*;
-    pub use super::serde::*;
     pub use nanomsg::{Socket, Protocol};
     pub use std::thread;
     pub use std::io::Read;

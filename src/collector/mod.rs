@@ -6,8 +6,6 @@ use std::thread::JoinGuard;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 use messaging::*;
-use messaging::serde::*;
-use messaging::data_types::*;
 
 pub struct CollectorThread<'a> {
     // NOTE: this needs to be before thread so channel is dropped before we join tread
@@ -84,8 +82,8 @@ impl Collector {
 #[cfg(test)]
 mod test {
     pub use super::*;
+    pub use messaging::*;
     pub use nanomsg::{Socket, Protocol};
-    pub use messaging::data_types::DataValue;
     pub use std::io::Read;
 
     describe! collector_thread {

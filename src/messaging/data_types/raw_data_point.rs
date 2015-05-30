@@ -1,4 +1,4 @@
-use super::serde::*;
+use super::super::serde::*;
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder, MessageReader};
 use capnp::message::ReaderOptions;
@@ -119,18 +119,5 @@ impl SerDeMessage for RawDataPoint {
             }
         }
     }
-}
-
-
-#[cfg(test)]
-mod test {
-    pub use super::*;
-    pub use capnp::{MessageBuilder, MallocMessageBuilder};
-
-    #[allow(dead_code)]
-    pub mod raw_data_point_capnp {
-        include!("./schema/raw_data_point_capnp.rs");
-    }
-
 }
 
