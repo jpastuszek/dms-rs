@@ -14,7 +14,7 @@ extern crate capnpc;
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
 mod raw_data_point_capnp {
-    include!("./schema/raw_data_point_capnp.rs");
+    include!("./messaging/schema/raw_data_point_capnp.rs");
 }
 
 mod collector;
