@@ -15,93 +15,91 @@ impl MessageHeader {
 }
 
 impl SerDeMessage for MessageHeader {
-		fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
-				match encoding {
-						Encoding::Plain => {
-								let encoding = self.encoding.to_string();
-								let data_type = self.data_type.to_string();
-								Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
-						},
-						_ => {
-								unimplemented!()
-						}
-				}
-		}
+    fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>> {
+        match encoding {
+            Encoding::Plain => {
+                let encoding = self.encoding.to_string();
+                let data_type = self.data_type.to_string();
+                Ok(format!("{}/{}\n{}\n{}\n\n", data_type, self.topic, self.version, encoding).into_bytes())
+            },
+            _ => unimplemented!()
+        }
+    }
 
-		fn data_type() -> DataType {
-				DataType::MessageHeader
-		}
+    fn data_type() -> DataType {
+        DataType::MessageHeader
+    }
 
-		fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
-				match encoding {
-						Encoding::Plain => {
-								let splits = bytes.split(|byte| *byte == '\n' as u8);
-								let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
+    fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
+        match encoding {
+            Encoding::Plain => {
+                let splits = bytes.split(|byte| *byte == '\n' as u8);
+                let mut parts = splits.take_while(|split| **split != []); // [] => \n\n
 
-								let data_type;
-								let topic;
-								match parts.next() {
-										Some(dt_topic) => {
-												let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
-												data_type = match splits.next() {
-														Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-																Ok(string) => match &*string {
-																		"RawDataPoint" => DataType::RawDataPoint,
-																		_ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
-																},
-																Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
-														},
-														None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
-												};
-												topic = match splits.next() {
-														Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-																Ok(string) => string,
-																Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("topic", utf8_error)))
-														},
-														None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
-												};
-										},
-										None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type/topic")))
-								};
+                let data_type;
+                let topic;
+                match parts.next() {
+                    Some(dt_topic) => {
+                        let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
+                        data_type = match splits.next() {
+                            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                                Ok(string) => match &*string {
+                                    "RawDataPoint" => DataType::RawDataPoint,
+                                    _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
+                                },
+                                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
+                            },
+                            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
+                        };
+                        topic = match splits.next() {
+                            Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                                Ok(string) => string,
+                                Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("topic", utf8_error)))
+                            },
+                            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
+                        };
+                    },
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type/topic")))
+                };
 
-								let version = match parts.next() {
-										Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-												Ok(string) => match string.parse::<u8>() {
-														Ok(int) => int,
-														Err(parse_error) => return Err(DeserializationError::new(SerDeErrorKind::InvalidVersionNumber(parse_error)))
-												},
-												Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("version", utf8_error)))
-										},
-										None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("version")))
-								};
+                let version = match parts.next() {
+                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                        Ok(string) => match string.parse::<u8>() {
+                            Ok(int) => int,
+                            Err(parse_error) => return Err(DeserializationError::new(SerDeErrorKind::InvalidVersionNumber(parse_error)))
+                        },
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("version", utf8_error)))
+                    },
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("version")))
+                };
 
-								let encoding = match parts.next() {
-										Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-												Ok(string) => match &*string {
-														"capnp" => Encoding::Capnp,
-														_ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
-												},
-												Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
-										},
-										None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
-								};
+                let encoding = match parts.next() {
+                    Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
+                        Ok(string) => match &*string {
+                            "capnp" => Encoding::Capnp,
+                            _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
+                        },
+                        Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
+                    },
+                    None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
+                };
 
-								for part in parts {
-										warn!("found extra part in message header: {:?}", part);
-								};
+                for part in parts {
+                    warn!("found extra part in message header: {:?}", part);
+                };
 
-								Ok(MessageHeader {
-										data_type: data_type,
-										topic: topic,
-										version: version,
-										encoding: encoding
-								})
-						},
-						_ => {
-								unimplemented!()
-						}
-				}
-		}
+                Ok(MessageHeader {
+                    data_type: data_type,
+                    topic: topic,
+                    version: version,
+                    encoding: encoding
+                })
+            },
+            _ => {
+                unimplemented!()
+            }
+        }
+    }
 }
 
 #[cfg(test)]

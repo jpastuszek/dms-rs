@@ -138,13 +138,13 @@ mod test {
                     let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
                     let now = UTC::now();
 
-                    let message = RawDataPoint {
-                        location: "myserver".to_string(),
-                        path: "cpu/usage".to_string(),
-                        component: "iowait".to_string(),
-                        timestamp: now,
-                        value: DataValue::Float(0.2)
-                    };
+                    let message = RawDataPoint::new(
+                        "myserver".to_string(),
+                        "cpu/usage".to_string(),
+                        "iowait".to_string(),
+                        now,
+                        DataValue::Float(0.2)
+                    );
 
                     socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
                 });

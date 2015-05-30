@@ -16,11 +16,23 @@ pub enum DataValue {
 
 #[derive(Debug)]
 pub struct RawDataPoint {
-    pub location: String,
-    pub path: String,
-    pub component: String,
-    pub timestamp: DateTime<UTC>,
-    pub value: DataValue,
+    location: String,
+    path: String,
+    component: String,
+    timestamp: DateTime<UTC>,
+    value: DataValue,
+}
+
+impl RawDataPoint {
+    pub fn new(location: String, path: String, component: String, timestamp: DateTime<UTC>, value: DataValue) -> RawDataPoint {
+        RawDataPoint {
+            location: location,
+            path: path,
+            component: component,
+            timestamp: timestamp,
+            value: value
+        }
+    }
 }
 
 impl SerDeMessage for RawDataPoint {
@@ -44,43 +56,22 @@ impl SerDeMessage for RawDataPoint {
                     {
                         let mut value_builder = raw_data_point_builder.borrow().init_value();
                         match self.value {
-                            DataValue::Integer(value) => {
-                                value_builder.set_integer(value);
-                            },
-                            DataValue::Float(value) => {
-                                value_builder.set_float(value);
-                            },
-                            DataValue::Bool(value) => {
-                                value_builder.set_boolean(value);
-                            },
-                            DataValue::Text(ref value) => {
-                                value_builder.set_text(&*value);
-                            },
+                            DataValue::Integer(value) => value_builder.set_integer(value),
+                            DataValue::Float(value) => value_builder.set_float(value),
+                            DataValue::Bool(value) => value_builder.set_boolean(value),
+                            DataValue::Text(ref value) => value_builder.set_text(&*value)
                         }
                     }
                 }
 
                 let mut data = Vec::new();
-                match serialize_packed::write_packed_message_unbuffered(&mut data, &mut message) {
-                    Ok(_) => {
-                        trace!("Message serialized ({} bytes)", data.len());
-                        return Ok(data);
-                    },
-                    Err(error) => {
-                        error!("Failed to serialize message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                        return Err(SerializationError::from(error));
-                    }
-                }
+                try!(serialize_packed::write_packed_message_unbuffered(&mut data, &mut message));
+                Ok(data)
             },
-            Encoding::Plain => {
-                warn!("Plain endocing is not implemented for data types");
-                // TODO: from?
-                Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))
-            }
+            Encoding::Plain => unimplemented!()
         }
     }
 
-    // TODO: use 'type' alias
     fn data_type() -> DataType {
         DataType::RawDataPoint
     }
@@ -92,31 +83,16 @@ impl SerDeMessage for RawDataPoint {
                 let raw_data_point = try!(reader.get_root::<::raw_data_point_capnp::raw_data_point::Reader>());
 
                 Ok(
-                    RawDataPoint {
-                        location: match raw_data_point.get_location() {
-                            Ok(value) => value.to_string(),
-                            Err(error) => {
-                                error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                                return Err(DeserializationError::from(error))
-                            }
-                        },
-                        path: match raw_data_point.get_path() {
-                            Ok(value) => value.to_string(),
-                            Err(error) => {
-                                error!("Failed to read message for {:?}: {}", <RawDataPoint as SerDeMessage>::data_type(), error);
-                                return Err(DeserializationError::from(error))
-                            }
-                        },
-                        component: "iowait".to_string(),
-                        timestamp: UTC::now(),
-                        value: DataValue::Float(0.2)
-                    }
+                    RawDataPoint::new(
+                        try!(raw_data_point.get_location()).to_string(),
+                        try!(raw_data_point.get_path()).to_string(),
+                        "iowait".to_string(),
+                        UTC::now(),
+                        DataValue::Float(0.2)
+                    )
                 )
             },
-            Encoding::Plain => {
-                warn!("Plain endocing is not implemented for data types");
-                Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))
-            }
+            Encoding::Plain => Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))
         }
     }
 }
