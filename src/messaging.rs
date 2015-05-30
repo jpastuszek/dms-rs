@@ -448,7 +448,7 @@ impl SerDeMessage for MessageHeader {
                     None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
                 };
             },
-            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("topic")))
+            None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type/topic")))
         };
 
         let version = match parts.next() {
@@ -524,10 +524,20 @@ mod test {
     pub use std::io::Read;
     pub use chrono::*;
     pub use std::error::Error;
+    pub use std::fmt::Write;
+    pub use std::fmt::Debug;
 
     #[allow(dead_code)]
     pub mod raw_data_point_capnp {
         include!("./schema/raw_data_point_capnp.rs");
+    }
+
+    pub fn assert_error_display_message<T>(result: Result<T, Box<Error>>, msg: &str) -> () where T: Debug {
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let mut message = String::new();
+        write!(&mut message, "{}", err).unwrap();
+        assert_eq!(message, msg);
     }
 
     describe! message_header {
@@ -580,36 +590,30 @@ mod test {
                         let bytes = "RawDataPoint/hello\n42\n\n".to_string().into_bytes();
 
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-
-                        println!("{}", err);
-                        // TODO: how do I test Dispaly output?
-                        assert_eq!(err.description(), "no encoding found in message header");
+                        //assert!(result.is_err());
+                        //let err = result.unwrap_err();
+                        //let mut message = String::new();
+                        //write!(&mut message, "{}", err).unwrap();
+                        //assert_eq!(message, "failed to deserializae message for type MessageHeader: no encoding found in message header");
+                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no encoding found in message header");
                     }
                     {
                         let bytes = "RawDataPoint/hello\n\n".to_string().into_bytes();
 
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-                        assert_eq!(err.description(), "no version found in message header");
+                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no version found in message header");
                     }
                     {
                         let bytes = "RawDataPoint\n\n".to_string().into_bytes();
 
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-                        assert_eq!(err.description(), "no topic found in message header");
+                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no topic found in message header");
                     }
                     {
                         let bytes = "\n\n".to_string().into_bytes();
 
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
-                        assert!(result.is_err());
-                        let err = result.unwrap_err();
-                        assert_eq!(err.description(), "no data type/topic part found in message header");
+                        assert_error_display_message(result.map_err(|e| Box::new(e) as Box<Error>), "failed to deserializae message for type MessageHeader: no data type/topic found in message header");
                     }
                 }
 
