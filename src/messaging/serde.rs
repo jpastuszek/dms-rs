@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::marker::MarkerTrait;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -35,118 +36,73 @@ impl Display for SerDeErrorKind {
     }
 }
 
-// TODO:
-// * do I need Error trait for DeserializationError<T> - used in tests; used internally as error
-// but never exposed directly due to being templated by data type
-// * how do I data_type based on the object T itself? (reflection?) - no; there is reflection
-// (unstable) but more for Any type support and testing if types equal or not
-// * can I deduplicate code for DeserializationError<T>/SerializationError<T>
-//  * common trait - I need a solid type for From to work with; I could use default impl - won't
-//  work since I cannot implement not mine trait (From) to potentially not mine object T: MyTrait
-// * how can I separete encodings for header from encodings for data type
-// * should I use from(kind::Enum) or new(kind::Enum) for internal errors? - new sounds better
+pub trait SerDeDirection: MarkerTrait + Debug {
+    fn direction_name() -> &'static str;
+}
 
 #[derive(Debug)]
-pub struct DeserializationError<T> where T: SerDeMessage {
-    pub kind: SerDeErrorKind,
-    pub data_type: DataType,
-    phantom: PhantomData<T>
-}
+struct SerializationDirection;
+#[derive(Debug)]
+struct DeserializationDirection;
 
-impl<T> Error for DeserializationError<T> where T: SerDeMessage {
-    fn description(&self) -> &str {
-        "deserialization error"
+impl SerDeDirection for SerializationDirection {
+    fn direction_name() -> &'static str {
+        "serialize"
     }
 }
 
-impl<T> fmt::Display for DeserializationError<T> where T: SerDeMessage {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to deserializae message for type {:?}: {}", T::data_type(), self.kind)
-    }
-}
-
-impl<T> DeserializationError<T> where T: SerDeMessage {
-    pub fn new(kind: SerDeErrorKind) -> DeserializationError<T> {
-        DeserializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
-    }
-}
-
-impl<T> From<SerDeErrorKind> for DeserializationError<T> where T: SerDeMessage {
-    fn from(kind: SerDeErrorKind) -> DeserializationError<T> {
-        DeserializationError::new(kind)
+impl SerDeDirection for DeserializationDirection {
+    fn direction_name() -> &'static str {
+        "deserializae"
     }
 }
 
 #[derive(Debug)]
-pub struct SerializationError<T> where T: SerDeMessage {
+pub struct SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
     pub kind: SerDeErrorKind,
     pub data_type: DataType,
-    phantom: PhantomData<T>
+    phantom_t: PhantomData<T>,
+    phantom_d: PhantomData<D>
 }
 
-impl<T> Error for SerializationError<T> where T: SerDeMessage {
+impl<T, D> Error for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
     fn description(&self) -> &str {
-        "serialization error"
+        "serialization/deserialization error"
     }
 }
 
-impl<T> fmt::Display for SerializationError<T> where T: SerDeMessage {
+impl<T, D> fmt::Display for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "failed to serialize message for type {:?}: {}", T::data_type(), self.kind)
+        write!(f, "failed to {} message for type {:?}: {}", D::direction_name(), T::data_type(), self.kind)
     }
 }
 
-impl<T> SerializationError<T> where T: SerDeMessage {
-    pub fn new(kind: SerDeErrorKind) -> SerializationError<T> {
-        SerializationError { kind: kind, data_type: T::data_type(), phantom: PhantomData }
+impl<T, D> SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    pub fn new(kind: SerDeErrorKind) -> SerDeError<T, D> {
+        SerDeError { kind: kind, data_type: T::data_type(), phantom_t: PhantomData, phantom_d: PhantomData }
     }
 }
 
-impl<T> From<SerDeErrorKind> for SerializationError<T> where T: SerDeMessage {
-    fn from(kind: SerDeErrorKind) -> SerializationError<T> {
-        SerializationError::new(kind)
+impl<T, D> From<SerDeErrorKind> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    fn from(kind: SerDeErrorKind) -> SerDeError<T, D> {
+        SerDeError::new(kind)
     }
 }
 
-// TODO: implement marker trait for both DeserializationError and SerializationError thich inherits
-// From<SerDeErrorKind> (needs to be implemented for both types) and define this as generic
-// impelemntation for types implementing this marker trait
-/*
-trait SerDeError: From<SerDeErrorKind> { }
-impl<T: SerDeMessage > SerDeError for DeserializationError<T> { }
-impl<T: SerDeMessage > SerDeError for SerializationError<T> { }
-impl<T> From<CapnpError> for T where T: SerDeError {
-    fn from(error: CapnpError) -> T {
-        T::from(SerDeErrorKind::CapnpError(error))
-    }
-}
-error: type parameter `T` must be used as the type parameter for some local type (e.g. `MyStruct<T>`); only traits defined in the current crate can be implemented for a type parameter
-*/
-
-impl<T> From<IoError> for DeserializationError<T> where T: SerDeMessage {
-    fn from(error: IoError) -> DeserializationError<T> {
+impl<T, D> From<IoError> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    fn from(error: IoError) -> SerDeError<T, D> {
         From::from(SerDeErrorKind::IoError(error))
     }
 }
 
-impl<T> From<IoError> for SerializationError<T> where T: SerDeMessage {
-    fn from(error: IoError) -> SerializationError<T> {
-        From::from(SerDeErrorKind::IoError(error))
-    }
-}
-
-impl<T> From<CapnpError> for DeserializationError<T> where T: SerDeMessage {
-    fn from(error: CapnpError) -> DeserializationError<T> {
+impl<T, D> From<CapnpError> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    fn from(error: CapnpError) -> SerDeError<T, D> {
         From::from(SerDeErrorKind::CapnpError(error))
     }
 }
 
-impl<T> From<CapnpError> for SerializationError<T> where T: SerDeMessage {
-    fn from(error: CapnpError) -> SerializationError<T> {
-        From::from(SerDeErrorKind::CapnpError(error))
-    }
-}
-
+pub type SerializationError<T> = SerDeError<T, SerializationDirection>;
+pub type DeserializationError<T> = SerDeError<T, DeserializationDirection>;
 
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum DataType {
