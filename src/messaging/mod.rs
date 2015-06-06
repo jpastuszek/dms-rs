@@ -88,12 +88,13 @@ impl<D> From<IoError> for MessagingError<D> where D: MessagingDirection {
 }
 
 pub trait SendMessage<T> where T: SerDeMessage {
-        fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>;
+        fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>> where S: Into<String>;
 }
 
 impl<T> SendMessage<T> for Socket where T: SerDeMessage {
-    fn send_message(&mut self, topic: String, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>>
-        where T: SerDeMessage {
+    fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>> where S: Into<String> {
+
+        let topic: String = topic.into();
         debug!("Sending message with {:?} on topic {}", T::data_type(), topic);
 
         let mut data: Vec<u8>;
@@ -146,7 +147,7 @@ mod test {
                         value: DataValue::Float(0.2)
                     };
 
-                    socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
+                    socket.send_message("hello", message, Encoding::Capnp).unwrap();
                 });
 
                 let mut msg = Vec::new();
