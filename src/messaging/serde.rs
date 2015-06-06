@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::marker::MarkerTrait;
+use std::str::FromStr;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
@@ -119,6 +120,17 @@ impl ToString for DataType {
      }
 }
 
+impl<'a> FromStr for DataType {
+    type Err = &'a str;
+    fn from_str<'b>(string: &'b str) -> Result<Self, &'b str> {
+        match string {
+            "RawDataPoint" => Ok(DataType::RawDataPoint),
+            "MessageHeader" => Ok(DataType::MessageHeader),
+            _ => Err(string)
+        }
+    }
+}
+
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum Encoding {
     Capnp,
@@ -135,9 +147,6 @@ impl ToString for Encoding {
 }
 
 pub trait SerDeMessage: Debug {
-    //type SerializationError = SerializationError<Self>;
-    //type DeserializationError = DeserializationError<Self>;
-
     fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>>;
     fn data_type() -> DataType;
     fn version() -> u8 {

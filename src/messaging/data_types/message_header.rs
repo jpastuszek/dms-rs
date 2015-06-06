@@ -1,4 +1,5 @@
 use super::super::serde::*;
+use std::str::FromStr;
 
 #[derive(Debug)]
 pub struct MessageHeader {
@@ -37,9 +38,9 @@ impl SerDeMessage for MessageHeader {
                         let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
                         data_type = match splits.next() {
                             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                                Ok(string) => match &*string {
-                                    "RawDataPoint" => DataType::RawDataPoint,
-                                    _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string)))
+                                Ok(string) => match DataType::from_str(&*string) {
+                                    Ok(dt) => dt,
+                                    Err(string) => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string.to_string())))
                                 },
                                 Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
                             },
