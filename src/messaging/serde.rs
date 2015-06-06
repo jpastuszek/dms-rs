@@ -15,8 +15,8 @@ pub enum SerDeErrorKind {
     CapnpError(CapnpError),
     IoError(IoError),
     EncodingNotImplemented(Encoding),
-    UnknownEncoding(String),
-    UnknownDataType(String),
+    UnknownEncodingError(UnknownEncodingError),
+    UnknownDataTypeError(UnknownDataTypeError),
     FromUtf8Error(&'static str, FromUtf8Error),
     MissingField(&'static str),
     InvalidVersionNumber(ParseIntError),
@@ -28,8 +28,8 @@ impl Display for SerDeErrorKind {
             &SerDeErrorKind::CapnpError(ref error) => write!(f, "Cap'n Proto Error: {}", error),
             &SerDeErrorKind::IoError(ref error) => write!(f, "IO Error: {}", error),
             &SerDeErrorKind::EncodingNotImplemented(ref enc) => write!(f, "encoding '{}' not implemented", enc.to_string()),
-            &SerDeErrorKind::UnknownEncoding(ref enc) => write!(f, "unknown encoding: {}", enc),
-            &SerDeErrorKind::UnknownDataType(ref type_name) => write!(f, "unknown data type: {}", type_name),
+            &SerDeErrorKind::UnknownEncodingError(ref error) => write!(f, "{}", error),
+            &SerDeErrorKind::UnknownDataTypeError(ref error) => write!(f, "{}", error),
             &SerDeErrorKind::FromUtf8Error(ref field_name, ref error) => write!(f, "error decoding {} string: {}", field_name, error),
             &SerDeErrorKind::MissingField(ref field_name) => write!(f, "no {} found in message header", field_name),
             &SerDeErrorKind::InvalidVersionNumber(ref error) => write!(f, "message version is not u8 number: {}", error),
@@ -90,6 +90,18 @@ impl<T, D> From<SerDeErrorKind> for SerDeError<T, D> where T: SerDeMessage, D: S
     }
 }
 
+impl<T, D> From<UnknownDataTypeError> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    fn from(error: UnknownDataTypeError) -> SerDeError<T, D> {
+        From::from(SerDeErrorKind::UnknownDataTypeError(error))
+    }
+}
+
+impl<T, D> From<UnknownEncodingError> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
+    fn from(error: UnknownEncodingError) -> SerDeError<T, D> {
+        From::from(SerDeErrorKind::UnknownEncodingError(error))
+    }
+}
+
 impl<T, D> From<IoError> for SerDeError<T, D> where T: SerDeMessage, D: SerDeDirection {
     fn from(error: IoError) -> SerDeError<T, D> {
         From::from(SerDeErrorKind::IoError(error))
@@ -111,6 +123,29 @@ pub enum DataType {
     MessageHeader
 }
 
+#[derive(Debug)]
+pub struct UnknownDataTypeError {
+   data_type: String
+}
+
+impl UnknownDataTypeError {
+    fn new(data_type: String) -> UnknownDataTypeError {
+        UnknownDataTypeError { data_type: data_type }
+    }
+}
+
+impl Error for UnknownDataTypeError {
+    fn description(&self) -> &str {
+        "unknown data type"
+    }
+}
+
+impl fmt::Display for UnknownDataTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "unknown data type: {}", self.data_type)
+    }
+}
+
 impl ToString for DataType {
      fn to_string(&self) -> String {
         match self {
@@ -120,13 +155,13 @@ impl ToString for DataType {
      }
 }
 
-impl<'a> FromStr for DataType {
-    type Err = &'a str;
-    fn from_str<'b>(string: &'b str) -> Result<Self, &'b str> {
+impl FromStr for DataType {
+    type Err = UnknownDataTypeError;
+    fn from_str(string: &str) -> Result<Self, UnknownDataTypeError> {
         match string {
             "RawDataPoint" => Ok(DataType::RawDataPoint),
             "MessageHeader" => Ok(DataType::MessageHeader),
-            _ => Err(string)
+            _ => Err(UnknownDataTypeError::new(string.to_string()))
         }
     }
 }
@@ -137,6 +172,29 @@ pub enum Encoding {
     Plain
 }
 
+#[derive(Debug)]
+pub struct UnknownEncodingError {
+   encoding: String
+}
+
+impl UnknownEncodingError {
+    fn new(encoding: String) -> UnknownEncodingError {
+        UnknownEncodingError { encoding: encoding }
+    }
+}
+
+impl Error for UnknownEncodingError {
+    fn description(&self) -> &str {
+        "unknown data type"
+    }
+}
+
+impl fmt::Display for UnknownEncodingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "unknown encoding: {}", self.encoding)
+    }
+}
+
 impl ToString for Encoding {
      fn to_string(&self) -> String {
          match self {
@@ -144,6 +202,17 @@ impl ToString for Encoding {
              &Encoding::Plain => "plain".to_string(),
          }
      }
+}
+
+impl FromStr for Encoding {
+    type Err = UnknownEncodingError;
+    fn from_str(string: &str) -> Result<Self, UnknownEncodingError> {
+        match string {
+            "capnp" => Ok(Encoding::Capnp),
+            "plain" => Ok(Encoding::Plain),
+            _ => Err(UnknownEncodingError::new(string.to_string()))
+        }
+    }
 }
 
 pub trait SerDeMessage: Debug {

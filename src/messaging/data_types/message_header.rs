@@ -38,10 +38,7 @@ impl SerDeMessage for MessageHeader {
                         let mut splits = dt_topic.splitn(2, |byte| *byte == '/' as u8);
                         data_type = match splits.next() {
                             Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                                Ok(string) => match DataType::from_str(&*string) {
-                                    Ok(dt) => dt,
-                                    Err(string) => return Err(DeserializationError::new(SerDeErrorKind::UnknownDataType(string.to_string())))
-                                },
+                                Ok(string) => try!(DataType::from_str(&*string)),
                                 Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("data type", utf8_error)))
                             },
                             None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("data type")))
@@ -70,10 +67,7 @@ impl SerDeMessage for MessageHeader {
 
                 let encoding = match parts.next() {
                     Some(bytes) => match String::from_utf8(Vec::from(bytes)) {
-                        Ok(string) => match &*string {
-                            "capnp" => Encoding::Capnp,
-                            _ => return Err(DeserializationError::new(SerDeErrorKind::UnknownEncoding(string)))
-                        },
+                        Ok(string) => try!(Encoding::from_str(&*string)),
                         Err(utf8_error) => return Err(DeserializationError::new(SerDeErrorKind::FromUtf8Error("encoding", utf8_error)))
                     },
                     None => return Err(DeserializationError::new(SerDeErrorKind::MissingField("encoding")))
