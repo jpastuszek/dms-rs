@@ -29,7 +29,6 @@ impl fmt::Display for MessagingErrorKind {
     }
 }
 
-// TODO: add Error::cause support?
 trait MessagingDirection: MarkerTrait + Debug {
     fn direction_name() -> &'static str;
 }
@@ -87,12 +86,15 @@ impl<D> From<IoError> for MessagingError<D> where D: MessagingDirection {
     }
 }
 
+pub type SendingError = MessagingError<SendingDirection>;
+pub type ReceivingError = MessagingError<ReceivingDirection>;
+
 pub trait SendMessage<T> where T: SerDeMessage {
-        fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>> where S: Into<String>;
+        fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), SendingError> where S: Into<String>;
 }
 
 impl<T> SendMessage<T> for Socket where T: SerDeMessage {
-    fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), MessagingError<SendingDirection>> where S: Into<String> {
+    fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), SendingError> where S: Into<String> {
 
         let topic: String = topic.into();
         debug!("Sending message with {:?} on topic {}", T::data_type(), topic);
