@@ -16,23 +16,11 @@ pub enum DataValue {
 
 #[derive(Debug)]
 pub struct RawDataPoint {
-    location: String,
-    path: String,
-    component: String,
-    timestamp: DateTime<UTC>,
-    value: DataValue,
-}
-
-impl RawDataPoint {
-    pub fn new(location: String, path: String, component: String, timestamp: DateTime<UTC>, value: DataValue) -> RawDataPoint {
-        RawDataPoint {
-            location: location,
-            path: path,
-            component: component,
-            timestamp: timestamp,
-            value: value
-        }
-    }
+    pub location: String,
+    pub path: String,
+    pub component: String,
+    pub timestamp: DateTime<UTC>,
+    pub value: DataValue
 }
 
 impl SerDeMessage for RawDataPoint {
@@ -83,13 +71,13 @@ impl SerDeMessage for RawDataPoint {
                 let raw_data_point = try!(reader.get_root::<::raw_data_point_capnp::raw_data_point::Reader>());
 
                 Ok(
-                    RawDataPoint::new(
-                        try!(raw_data_point.get_location()).to_string(),
-                        try!(raw_data_point.get_path()).to_string(),
-                        "iowait".to_string(),
-                        UTC::now(),
-                        DataValue::Float(0.2)
-                    )
+                    RawDataPoint {
+                        location: try!(raw_data_point.get_location()).to_string(),
+                        path: try!(raw_data_point.get_path()).to_string(),
+                        component: "iowait".to_string(),
+                        timestamp: UTC::now(),
+                        value: DataValue::Float(0.2)
+                    }
                 )
             },
             Encoding::Plain => Err(From::from(SerDeErrorKind::EncodingNotImplemented(Encoding::Plain)))

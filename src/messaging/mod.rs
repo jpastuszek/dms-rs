@@ -98,12 +98,12 @@ impl<T> SendMessage<T> for Socket where T: SerDeMessage {
 
         let mut data: Vec<u8>;
 
-        let header = MessageHeader::new(
-            T::data_type(),
-            topic,
-            T::version(),
-            encoding
-        );
+        let header = MessageHeader {
+            data_type: T::data_type(),
+            topic: topic,
+            version: T::version(),
+            encoding: encoding
+        };
         data = try!(header.to_bytes(Encoding::Plain));
 
         let body = try!(message.to_bytes(encoding));
@@ -138,13 +138,13 @@ mod test {
                     let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
                     let now = UTC::now();
 
-                    let message = RawDataPoint::new(
-                        "myserver".to_string(),
-                        "cpu/usage".to_string(),
-                        "iowait".to_string(),
-                        now,
-                        DataValue::Float(0.2)
-                    );
+                    let message = RawDataPoint {
+                        location: "myserver".to_string(),
+                        path: "cpu/usage".to_string(),
+                        component: "iowait".to_string(),
+                        timestamp: now,
+                        value: DataValue::Float(0.2)
+                    };
 
                     socket.send_message("hello".to_string(), message, Encoding::Capnp).unwrap();
                 });

@@ -2,16 +2,10 @@ use super::super::serde::*;
 
 #[derive(Debug)]
 pub struct MessageHeader {
-		data_type: DataType,
-		topic: String,
-		version: u8,
-		encoding: Encoding,
-}
-
-impl MessageHeader {
-    pub fn new(data_type: DataType, topic: String, version: u8, encoding: Encoding) -> MessageHeader {
-        MessageHeader { data_type: data_type, topic: topic, version: version, encoding: encoding }
-    }
+    pub data_type: DataType,
+    pub topic: String,
+    pub version: u8,
+    pub encoding: Encoding,
 }
 
 impl SerDeMessage for MessageHeader {

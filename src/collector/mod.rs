@@ -60,13 +60,13 @@ pub struct Collector {
 
 impl Collector {
     pub fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
-        let raw_data_point = Box::new(RawDataPoint::new(
-            location.to_string(),
-            path.to_string(),
-            component.to_string(),
-            self.timestamp,
-            value
-        ));
+        let raw_data_point = Box::new(RawDataPoint {
+            location: location.to_string(),
+            path: path.to_string(),
+            component: component.to_string(),
+            timestamp: self.timestamp,
+            value: value
+        });
 
         match self.sink.send(raw_data_point) {
             Ok(_) => {
