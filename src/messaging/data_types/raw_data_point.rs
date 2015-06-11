@@ -1,9 +1,10 @@
-use super::super::serde::*;
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder, MessageReader};
 use capnp::message::ReaderOptions;
 use capnp::io::ArrayInputStream;
-use chrono::*;
+use chrono::{DateTime, UTC, Timelike};
+
+use super::super::serde::*;
 
 #[derive(Debug)]
 #[allow(dead_code)]

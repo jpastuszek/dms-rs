@@ -1,10 +1,11 @@
-use nanomsg::{Socket, Protocol};
-use chrono::*;
-
 use std::thread;
 use std::thread::JoinGuard;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
+
+use nanomsg::{Socket, Protocol};
+use chrono::{DateTime, UTC};
+
 use messaging::*;
 
 pub struct CollectorThread<'a> {
