@@ -17,8 +17,9 @@ mod raw_data_point_capnp {
     include!("./messaging/schema/raw_data_point_capnp.rs");
 }
 
-mod collector;
 mod messaging;
+mod collector;
+mod scheduler;
 
 #[cfg(not(test))]
 fn main() {
