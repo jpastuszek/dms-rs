@@ -104,19 +104,19 @@ mod test {
                     let mut collector = collector_thread.new_collector();
 
                     collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-                    collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+                    collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
 
                     let mut msg = Vec::new();
-                    match pull.read_to_end(&mut msg) {
-                        Ok(_) => println!("{:?}", msg),
-                        Err(error) => panic!("got error: {}", error)
-                    }
-                    /*
-                    match pull.read_to_end(&mut msg) {
-                        Ok(_) => println!("{:?}", msg),
-                        Err(error) => panic!("got error: {}", error)
-                    }
-                    */
+                    pull.read_to_end(&mut msg).unwrap();
+                    let msg_string = String::from_utf8_lossy(&msg);
+                    assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+                    assert!(msg_string.contains("myserver"));
+
+                    let mut msg = Vec::new();
+                    pull.read_to_end(&mut msg).unwrap();
+                    let msg_string = String::from_utf8_lossy(&msg);
+                    assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+                    assert!(msg_string.contains("foobar"));
                 }
             }
         }
