@@ -3,6 +3,7 @@ use std::ops::Fn;
 use chrono::{DateTime, UTC, Duration};
 use std::collections::BTreeMap;
 use std::collections::Bound::{Included, Unbounded};
+use std::thread::sleep_ms;
 
 pub struct Task<C,O> {
     interval: Duration,
@@ -36,23 +37,49 @@ impl<C,O> Task<C,O> {
     }
 }
 
-pub struct Scheduler<C,O> {
-    offset: DateTime<UTC>,
-    group_interval: Duration,
-    tasks: BTreeMap<u32, Vec<Task<C,O>>>
+pub trait TimeSource {
+    fn now(&self) -> DateTime<UTC>;
+    fn wait(&mut self, duration: Duration);
 }
 
-impl<C,O> Scheduler<C,O> {
-    pub fn new(group_interval: Duration) -> Scheduler<C,O> {
+pub struct RealTimeSource;
+
+impl RealTimeSource {
+    fn new() -> RealTimeSource {
+        RealTimeSource
+    }
+}
+
+impl TimeSource for RealTimeSource {
+    fn now(&self) -> DateTime<UTC> {
+        UTC::now()
+    }
+
+    fn wait(&mut self, duration: Duration) {
+        sleep_ms(duration.num_milliseconds() as u32)
+    }
+}
+
+pub struct Scheduler<C, O, T> where T: TimeSource {
+    offset: DateTime<UTC>,
+    group_interval: Duration,
+    tasks: BTreeMap<u32, Vec<Task<C, O>>>,
+    time_source: T
+}
+
+impl<C, O, T> Scheduler<C, O, T> where T: TimeSource {
+    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<C, O, T>
+        where T: TimeSource {
         Scheduler {
             offset: UTC::now(),
             group_interval: group_interval,
-            tasks: BTreeMap::new()
+            tasks: BTreeMap::new(),
+            time_source: time_source
         }
     }
 
-    pub fn schedule(&mut self, mut task: Task<C,O>) {
-        let now = UTC::now();
+    pub fn schedule(&mut self, mut task: Task<C, O>) {
+        let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
         let mut schedule;
@@ -71,13 +98,15 @@ impl<C,O> Scheduler<C,O> {
     pub fn run(&mut self, collector: &mut C) -> Vec<O> {
         println!("{:?}", self.tasks);
 
-        let now = UTC::now();
+        let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
         let mut out;
 
+        // TODO: wait for next quant if we have nothing to do
+
         let mut run_groups = Vec::new();
         {
-            let mut run_tasks = Vec::<&Task<C,O>>::new();
+            let mut run_tasks = Vec::<&Task<C, O>>::new();
 
             for (run_group, ref tasks) in self.tasks.range(Unbounded, Included(&current_schedule)) {
                 run_tasks.extend(tasks.iter());
@@ -101,6 +130,10 @@ impl<C,O> Scheduler<C,O> {
         out
     }
 
+    #[allow(dead_code)]
+    pub fn time_source(&self) -> &TimeSource {
+        &self.time_source
+    }
 
     fn to_run_group(&self, duration: Duration) -> u32 {
         let interval = self.group_interval.num_microseconds().unwrap();
@@ -120,8 +153,30 @@ impl<C,O> Scheduler<C,O> {
 #[cfg(test)]
 mod test {
     pub use super::*;
-    pub use chrono::{UTC, Duration};
+    pub use chrono::{DateTime, UTC, Duration};
     pub use std::thread::sleep_ms;
+
+    pub struct FakeTimeSource {
+        now: DateTime<UTC>
+    }
+
+    impl FakeTimeSource {
+        fn new() -> FakeTimeSource {
+            FakeTimeSource {
+                now: UTC::now()
+            }
+        }
+    }
+
+    impl TimeSource for FakeTimeSource {
+        fn now(&self) -> DateTime<UTC> {
+            self.now
+        }
+
+        fn wait(&mut self, duration: Duration) {
+            self.now = self.now + duration;
+        }
+    }
 
     describe! task {
         it "should be crated with closure representing the task that gets collector" {
@@ -162,8 +217,8 @@ mod test {
     }
 
     describe! scheduler {
-        it "should allow scheduling tasks at regular intervals that are rounded and grouped together" {
-            let mut scheduler = Scheduler::new(Duration::milliseconds(500));
+        it "should execute tasks given time progress" {
+            let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
             let task: Task<(),u8> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
                 1
@@ -171,7 +226,8 @@ mod test {
 
             scheduler.schedule(task);
 
-            sleep_ms(1500);
+            scheduler.time_source.wait(Duration::milliseconds(1500));
+
             let out = scheduler.run(&mut ());
             assert_eq!(out, vec![1]);
         }
