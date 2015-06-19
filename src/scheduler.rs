@@ -1,12 +1,20 @@
+use std::fmt;
 use std::ops::Fn;
 use chrono::{DateTime, UTC, Duration};
 use collector::Collector;
 use std::collections::BTreeMap;
+use std::collections::Bound::{Included, Unbounded};
 
 pub struct Task {
     interval: Duration,
     run_offset: DateTime<UTC>,
     task: Box<Fn(&mut Collector) -> ()>
+}
+
+impl fmt::Debug for Task {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Task({}, {})", self.interval, self.run_offset)
+    }
 }
 
 impl Task {
@@ -32,7 +40,7 @@ impl Task {
 pub struct Scheduler {
     offset: DateTime<UTC>,
     group_interval: Duration,
-    tasks: BTreeMap<u32, Task>
+    tasks: BTreeMap<u32, Vec<Task>>
 }
 
 impl Scheduler {
@@ -48,7 +56,7 @@ impl Scheduler {
         let now = UTC::now();
         let current_schedule = self.to_quantum(now - self.offset);
 
-        let mut schedule = 0;
+        let mut schedule;
         loop {
             schedule = self.to_quantum(task.next_schedule() - now);
             if schedule > current_schedule {
@@ -56,9 +64,39 @@ impl Scheduler {
             }
         }
 
-        println!("{}", schedule);
-        self.tasks.insert(schedule, task);
+        self.tasks.entry(schedule).or_insert(Vec::new()).push(task);
+
+        println!("{:?}", self.tasks);
     }
+
+    pub fn run(&mut self, collector: &mut Collector) {
+        println!("{:?}", self.tasks);
+
+        let now = UTC::now();
+        let current_schedule = self.to_quantum(now - self.offset);
+
+        let mut run_groups = Vec::new();
+        {
+            let mut run_tasks = Vec::<&Task>::new();
+
+            for (run_group, ref tasks) in self.tasks.range(Unbounded, Included(&current_schedule)) {
+                run_tasks.extend(tasks.iter());
+                run_groups.push(run_group.clone());
+            }
+
+            for run_task in &run_tasks {
+                run_task.run(collector);
+            }
+
+            println!("{:?}", run_tasks);
+        }
+
+        for ref run_group in run_groups {
+           self.tasks.remove(run_group);
+        }
+        println!("{:?}", self.tasks);
+    }
+
 
     fn to_quantum(&self, duration: Duration) -> u32 {
         let interval = self.group_interval.num_microseconds().unwrap();
@@ -83,6 +121,7 @@ mod test {
     pub use nanomsg::{Socket, Protocol};
     pub use std::io::Read;
     pub use chrono::{UTC, Duration};
+    pub use std::thread::sleep_ms;
 
     describe! task {
         it "should be crated with closure representing the task that gets collector" {
@@ -125,6 +164,12 @@ mod test {
             }));
 
             scheduler.schedule(task);
+
+            let collector_thread = CollectorThread::spawn("ipc:///tmp/test-scheduler.ipc");
+            let mut collector = collector_thread.new_collector();
+
+            sleep_ms(1500);
+            scheduler.run(&mut collector);
         }
     }
 }

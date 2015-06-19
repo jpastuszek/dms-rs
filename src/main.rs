@@ -1,5 +1,6 @@
 #![feature(plugin)]
 #![feature(std_misc)]
+#![feature(collections)]
 #![plugin(stainless)]
 extern crate clap;
 use clap::{Arg, App};
