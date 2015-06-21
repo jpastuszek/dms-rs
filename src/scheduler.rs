@@ -2,23 +2,24 @@ use std::fmt;
 use std::ops::Fn;
 use chrono::{DateTime, UTC, Duration};
 use std::collections::BTreeMap;
-use std::collections::Bound::{Included, Unbounded};
+use std::collections::Bound::{Included, Unbounded, Excluded};
+use std::cmp::Ordering;
 use std::thread::sleep_ms;
 
-pub struct Task<C,O> {
+pub struct Task<C, O, E> {
     interval: Duration,
     run_offset: DateTime<UTC>,
-    task: Box<Fn(&mut C) -> O>
+    task: Box<Fn(&mut C) -> Result<O, E>>
 }
 
-impl<C,O> fmt::Debug for Task<C,O> {
+impl<C, O, E> fmt::Debug for Task<C, O, E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Task({}, {})", self.interval, self.run_offset)
     }
 }
 
-impl<C,O> Task<C,O> {
-    fn new(interval: Duration, run_offset: DateTime<UTC>, task: Box<Fn(&mut C) -> O>) -> Task<C,O> {
+impl<C, O, E> Task<C, O, E> {
+    fn new(interval: Duration, run_offset: DateTime<UTC>, task: Box<Fn(&mut C) -> Result<O, E>>) -> Task<C, O, E> {
         assert!(interval > Duration::seconds(0)); // negative interval would make schedule go back in time!
         Task {
             interval: interval,
@@ -27,7 +28,7 @@ impl<C,O> Task<C,O> {
         }
     }
 
-    fn run(&self, collector: &mut C) -> O {
+    fn run(&self, collector: &mut C) -> Result<O, E> {
         (self.task)(collector)
     }
 
@@ -60,15 +61,29 @@ impl TimeSource for RealTimeSource {
     }
 }
 
-pub struct Scheduler<C, O, T> where T: TimeSource {
+#[derive(Debug)]
+pub enum SchedulerRunError {
+    ScheduleEmpty,
+    TasksSkipped(u32)
+}
+
+#[derive(Debug)]
+enum RunAction {
+    None,
+    Wait(Duration),
+    Skip(Vec<u32>),
+    Run(u32)
+}
+
+pub struct Scheduler<C, O, E, T> where T: TimeSource {
     offset: DateTime<UTC>,
     group_interval: Duration,
-    tasks: BTreeMap<u32, Vec<Task<C, O>>>,
+    tasks: BTreeMap<u32, Vec<Task<C, O, E>>>,
     time_source: T
 }
 
-impl<C, O, T> Scheduler<C, O, T> where T: TimeSource {
-    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<C, O, T>
+impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
+    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<C, O, E, T>
         where T: TimeSource {
         Scheduler {
             offset: UTC::now(),
@@ -78,7 +93,7 @@ impl<C, O, T> Scheduler<C, O, T> where T: TimeSource {
         }
     }
 
-    pub fn schedule(&mut self, mut task: Task<C, O>) {
+    pub fn schedule(&mut self, mut task: Task<C, O, E>) {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -95,39 +110,50 @@ impl<C, O, T> Scheduler<C, O, T> where T: TimeSource {
         println!("{:?}", self.tasks);
     }
 
-    pub fn run(&mut self, collector: &mut C) -> Vec<O> {
-        println!("{:?}", self.tasks);
-
+    fn run_action(&self) -> RunAction {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
-        let mut out;
 
-        // TODO: wait for next quant if we have nothing to do
-
-        let mut run_groups = Vec::new();
-        {
-            let mut run_tasks = Vec::<&Task<C, O>>::new();
-
-            for (run_group, ref tasks) in self.tasks.range(Unbounded, Included(&current_schedule)) {
-                run_tasks.extend(tasks.iter());
-                run_groups.push(run_group.clone());
+        match self.tasks.iter().next() {
+            None => RunAction::None,
+            Some((&run_group, _)) => {
+                match run_group.cmp(&current_schedule) {
+                    Ordering::Greater => RunAction::Wait(self.to_duration(current_schedule - run_group)),
+                    Ordering::Less => RunAction::Skip(self.tasks.range(Unbounded, Excluded(&current_schedule)).map(|(run_group, _)| run_group.clone()).collect()),
+                    Ordering::Equal => RunAction::Run(run_group)
+                }
             }
-
-            out = Vec::with_capacity(run_tasks.len());
-
-            for run_task in &run_tasks {
-                out.push(run_task.run(collector));
-            }
-
-            println!("{:?}", run_tasks);
         }
+    }
 
-        for ref run_group in run_groups {
-           self.tasks.remove(run_group);
-        }
+    pub fn run(&mut self, collector: &mut C) -> Result<Vec<Result<O, E>>, SchedulerRunError> {
         println!("{:?}", self.tasks);
+        match self.run_action() {
+            RunAction::None => Err(SchedulerRunError::ScheduleEmpty),
+            RunAction::Wait(duration) => {
+                self.time_source.wait(duration);
+                self.run(collector)
+            },
+            RunAction::Skip(run_groups) => {
+                let count = run_groups.iter().fold(0, |sum, run_group| {
+                    sum + self.tasks[run_group].len() as u32
+                });
+                Err(SchedulerRunError::TasksSkipped(count))
+            },
+            RunAction::Run(run_group) => {
+                let mut out;
+                {
+                    let ref run_tasks = self.tasks[&run_group];
+                    out = Vec::with_capacity(run_tasks.len());
 
-        out
+                    for run_task in run_tasks {
+                        out.push(run_task.run(collector));
+                    }
+                }
+                self.tasks.remove(&run_group);
+                Ok(out)
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -147,6 +173,10 @@ impl<C, O, T> Scheduler<C, O, T> where T: TimeSource {
             run_group + 1; // ceil
         }
         run_group as u32
+    }
+
+    fn to_duration(&self, run_group: u32) -> Duration {
+        Duration::milliseconds(((self.group_interval.num_milliseconds() as u32) * run_group) as i64)
     }
 }
 
@@ -180,9 +210,10 @@ mod test {
 
     describe! task {
         it "should be crated with closure representing the task that gets collector" {
-            let task: Task<Vec<u8>,()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|collector| {
+            let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|collector| {
                 collector.push(1);
                 collector.push(2);
+                Ok(())
             }));
 
             let mut collector = Vec::new();
@@ -194,8 +225,8 @@ mod test {
         }
 
         it "should be crated with closure representing the task that returns something" {
-            let task: Task<(),u8> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
-                1
+            let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
+                Ok(1)
             }));
 
             let mut out = Vec::new();
@@ -203,12 +234,12 @@ mod test {
             out.push(task.run(&mut ()));
             out.push(task.run(&mut ()));
 
-            assert_eq!(out, vec![1, 1]);
+            assert_eq!(out, vec![Ok(1), Ok(1)]);
         }
 
         describe! next_schedule {
             it "should provide next run schedule for this task" {
-                let mut task: Task<(),()> = Task::new(Duration::seconds(42), UTC::now(), Box::new(|_| { }));
+                let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), Box::new(|_| { Ok(()) }));
 
                 assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
                 assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
@@ -220,8 +251,8 @@ mod test {
         it "should execute tasks given time progress" {
             let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            let task: Task<(),u8> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
-                1
+            let task: Task<(),u8,()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
+                Ok(1)
             }));
 
             scheduler.schedule(task);
@@ -229,7 +260,7 @@ mod test {
             scheduler.time_source.wait(Duration::milliseconds(1500));
 
             let out = scheduler.run(&mut ());
-            assert_eq!(out, vec![1]);
+            assert_eq!(out.unwrap(), vec![Ok(1)]);
         }
     }
 }
