@@ -67,8 +67,8 @@ pub enum SchedulerRunError {
     TasksSkipped(u32)
 }
 
-#[derive(Debug)]
-enum RunAction {
+#[derive(Debug, Eq, PartialEq)]
+pub enum RunAction {
     None,
     Wait(Duration),
     Skip(Vec<u32>),
@@ -86,7 +86,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
     pub fn new(group_interval: Duration, time_source: T) -> Scheduler<C, O, E, T>
         where T: TimeSource {
         Scheduler {
-            offset: UTC::now(),
+            offset: time_source.now(),
             group_interval: group_interval,
             tasks: BTreeMap::new(),
             time_source: time_source
@@ -110,7 +110,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         println!("{:?}", self.tasks);
     }
 
-    fn run_action(&self) -> RunAction {
+    pub fn run_action(&self) -> RunAction {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -118,7 +118,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
             None => RunAction::None,
             Some((&run_group, _)) => {
                 match run_group.cmp(&current_schedule) {
-                    Ordering::Greater => RunAction::Wait(self.to_duration(current_schedule - run_group)),
+                    Ordering::Greater => RunAction::Wait((self.offset + self.to_duration(run_group)) - now),
                     Ordering::Less => RunAction::Skip(self.tasks.range(Unbounded, Excluded(&current_schedule)).map(|(run_group, _)| run_group.clone()).collect()),
                     Ordering::Equal => RunAction::Run(run_group)
                 }
@@ -176,7 +176,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
     }
 
     fn to_duration(&self, run_group: u32) -> Duration {
-        Duration::milliseconds(((self.group_interval.num_milliseconds() as u32) * run_group) as i64)
+        self.group_interval * (run_group as i32)
     }
 }
 
@@ -248,6 +248,23 @@ mod test {
     }
 
     describe! scheduler {
+        describe! run_action {
+            it "should return Wait with duration if there is nothing to do yet" {
+                let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+
+                let task: Task<(),u8,()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
+                    Ok(1)
+                }));
+
+                scheduler.schedule(task);
+
+                assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::seconds(1)));
+
+                scheduler.time_source.wait(Duration::milliseconds(700));
+                assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::milliseconds(300)));
+            }
+        }
+
         it "should execute tasks given time progress" {
             let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
@@ -256,8 +273,6 @@ mod test {
             }));
 
             scheduler.schedule(task);
-
-            scheduler.time_source.wait(Duration::milliseconds(1500));
 
             let out = scheduler.run(&mut ());
             assert_eq!(out.unwrap(), vec![Ok(1)]);
