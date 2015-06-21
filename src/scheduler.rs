@@ -61,25 +61,27 @@ impl TimeSource for RealTimeSource {
     }
 }
 
+type RunGroup = u32;
+
 // TODO: make this a real error
 #[derive(Debug, Eq, PartialEq)]
 pub enum SchedulerRunError {
     ScheduleEmpty,
-    TasksSkipped(u32)
+    TasksSkipped(RunGroup)
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum RunAction {
     None,
     Wait(Duration),
-    Skip(Vec<u32>),
-    Run(u32)
+    Skip(Vec<RunGroup>),
+    Run(RunGroup)
 }
 
 pub struct Scheduler<C, O, E, T> where T: TimeSource {
     offset: DateTime<UTC>,
     group_interval: Duration,
-    tasks: BTreeMap<u32, Vec<Task<C, O, E>>>,
+    tasks: BTreeMap<RunGroup, Vec<Task<C, O, E>>>,
     time_source: T
 }
 
@@ -135,7 +137,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
             },
             RunAction::Skip(run_groups) => {
                 let count = run_groups.iter().fold(0, |sum, run_group| {
-                    sum + self.tasks[run_group].len() as u32
+                    sum + self.tasks[run_group].len() as RunGroup
                 });
 
                 for run_group in run_groups {
@@ -164,7 +166,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         &self.time_source
     }
 
-    fn to_run_group(&self, duration: Duration) -> u32 {
+    fn to_run_group(&self, duration: Duration) -> RunGroup {
         let interval = self.group_interval.num_microseconds().unwrap();
         let duration = duration.num_microseconds().unwrap();
         if duration < 0 || interval <= 0 {
@@ -175,10 +177,10 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         if duration % interval != 0 {
             run_group + 1; // ceil
         }
-        run_group as u32
+        run_group as RunGroup
     }
 
-    fn to_duration(&self, run_group: u32) -> Duration {
+    fn to_duration(&self, run_group: RunGroup) -> Duration {
         self.group_interval * (run_group as i32)
     }
 }
