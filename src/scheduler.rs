@@ -61,7 +61,8 @@ impl TimeSource for RealTimeSource {
     }
 }
 
-#[derive(Debug)]
+// TODO: make this a real error
+#[derive(Debug, Eq, PartialEq)]
 pub enum SchedulerRunError {
     ScheduleEmpty,
     TasksSkipped(u32)
@@ -136,6 +137,10 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
                 let count = run_groups.iter().fold(0, |sum, run_group| {
                     sum + self.tasks[run_group].len() as u32
                 });
+
+                for run_group in run_groups {
+                    self.tasks.remove(&run_group);
+                }
                 Err(SchedulerRunError::TasksSkipped(count))
             },
             RunAction::Run(run_group) => {
@@ -246,29 +251,29 @@ mod test {
     }
 
     describe! scheduler {
+        before_each {
+            let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+
+            let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), Box::new(|_| {
+                Ok(1)
+            }));
+            let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), Box::new(|_| {
+                Ok(2)
+            }));
+            let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), Box::new(|_| {
+                Ok(3)
+            }));
+            let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), Box::new(|_| {
+                Ok(4)
+            }));
+
+            scheduler.schedule(task1);
+            scheduler.schedule(task2);
+            scheduler.schedule(task3);
+            scheduler.schedule(task4);
+        }
+
         describe! run_action {
-            before_each {
-                let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
-
-                let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), Box::new(|_| {
-                    Ok(1)
-                }));
-                let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), Box::new(|_| {
-                    Ok(1)
-                }));
-                let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), Box::new(|_| {
-                    Ok(1)
-                }));
-                let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), Box::new(|_| {
-                    Ok(1)
-                }));
-
-                scheduler.schedule(task1);
-                scheduler.schedule(task2);
-                scheduler.schedule(task3);
-                scheduler.schedule(task4);
-            }
-
             it "should return Wait with duration if there is nothing to do yet" {
                 assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::seconds(1)));
                 scheduler.time_source.wait(Duration::milliseconds(700));
@@ -293,17 +298,33 @@ mod test {
             }
         }
 
-        it "should execute tasks given time progress" {
-            let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
-
-            let task: Task<(),u8,()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
-                Ok(1)
-            }));
-
-            scheduler.schedule(task);
+        it "should execute tasks given time progress until empty" {
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Ok(vec![Ok(1), Ok(2)]));
 
             let out = scheduler.run(&mut ());
-            assert_eq!(out.unwrap(), vec![Ok(1)]);
+            assert_eq!(out, Ok(vec![Ok(3)]));
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Ok(vec![Ok(4)]));
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Err(SchedulerRunError::ScheduleEmpty));
+        }
+
+        it "should report skipped tasks if time progresses over run group" {
+            scheduler.time_source.wait(Duration::milliseconds(1500));
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Err(SchedulerRunError::TasksSkipped(2)));
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Ok(vec![Ok(3)]));
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Ok(vec![Ok(4)]));
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Err(SchedulerRunError::ScheduleEmpty));
         }
     }
 }
