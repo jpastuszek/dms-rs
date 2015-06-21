@@ -2,7 +2,7 @@ use std::fmt;
 use std::ops::Fn;
 use chrono::{DateTime, UTC, Duration};
 use std::collections::BTreeMap;
-use std::collections::Bound::{Included, Unbounded, Excluded};
+use std::collections::Bound::{Unbounded, Excluded};
 use std::cmp::Ordering;
 use std::thread::sleep_ms;
 
@@ -14,7 +14,7 @@ pub struct Task<C, O, E> {
 
 impl<C, O, E> fmt::Debug for Task<C, O, E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Task({}, {})", self.interval, self.run_offset)
+        write!(f, "Task({} +{})", self.run_offset, self.interval.num_milliseconds())
     }
 }
 
@@ -106,8 +106,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         }
 
         self.tasks.entry(schedule).or_insert(Vec::new()).push(task);
-
-        println!("{:?}", self.tasks);
+        //println!("{:?}", self.tasks);
     }
 
     pub fn run_action(&self) -> RunAction {
@@ -127,7 +126,6 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
     }
 
     pub fn run(&mut self, collector: &mut C) -> Result<Vec<Result<O, E>>, SchedulerRunError> {
-        println!("{:?}", self.tasks);
         match self.run_action() {
             RunAction::None => Err(SchedulerRunError::ScheduleEmpty),
             RunAction::Wait(duration) => {
@@ -218,8 +216,8 @@ mod test {
 
             let mut collector = Vec::new();
 
-            task.run(&mut collector);
-            task.run(&mut collector);
+            let _ = task.run(&mut collector);
+            let _ = task.run(&mut collector);
 
             assert_eq!(collector, vec![1, 2, 1, 2]);
         }
@@ -249,19 +247,49 @@ mod test {
 
     describe! scheduler {
         describe! run_action {
-            it "should return Wait with duration if there is nothing to do yet" {
+            before_each {
                 let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-                let task: Task<(),u8,()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
+                let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), Box::new(|_| {
+                    Ok(1)
+                }));
+                let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), Box::new(|_| {
+                    Ok(1)
+                }));
+                let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), Box::new(|_| {
+                    Ok(1)
+                }));
+                let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), Box::new(|_| {
                     Ok(1)
                 }));
 
-                scheduler.schedule(task);
+                scheduler.schedule(task1);
+                scheduler.schedule(task2);
+                scheduler.schedule(task3);
+                scheduler.schedule(task4);
+            }
 
+            it "should return Wait with duration if there is nothing to do yet" {
                 assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::seconds(1)));
-
                 scheduler.time_source.wait(Duration::milliseconds(700));
                 assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::milliseconds(300)));
+            }
+
+            it "should return Run with run group when time is just right" {
+                scheduler.time_source.wait(Duration::milliseconds(1000));
+                assert_eq!(scheduler.run_action(), RunAction::Run(2));
+            }
+
+            it "should return Run with run group when time is still within same run group" {
+                scheduler.time_source.wait(Duration::milliseconds(1499));
+                assert_eq!(scheduler.run_action(), RunAction::Run(2));
+            }
+
+            it "should return Skip with list of skipped run groups when time is after first run group" {
+                scheduler.time_source.wait(Duration::milliseconds(1500));
+                assert_eq!(scheduler.run_action(), RunAction::Skip(vec![2]));
+                scheduler.time_source.wait(Duration::milliseconds(1500));
+                assert_eq!(scheduler.run_action(), RunAction::Skip(vec![2, 4, 5]));
             }
         }
 
