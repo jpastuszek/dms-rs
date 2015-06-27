@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
-use std::marker::MarkerTrait;
 use std::str::FromStr;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::any::Any;
 use std::error::Error;
 use std::io::Error as IoError;
 use std::string::FromUtf8Error;
@@ -37,7 +37,8 @@ impl Display for SerDeErrorKind {
     }
 }
 
-pub trait SerDeDirection: MarkerTrait + Debug {
+// NOTE: Error trait requires Debug + Display + Reflect (Any: Reflect - while Relfect is unstable)
+pub trait SerDeDirection: Debug + Any {
     fn direction_name() -> &'static str;
 }
 
@@ -215,7 +216,7 @@ impl FromStr for Encoding {
     }
 }
 
-pub trait SerDeMessage: Debug {
+pub trait SerDeMessage: Debug + Any {
     fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>>;
     fn data_type() -> DataType;
     fn version() -> u8 {

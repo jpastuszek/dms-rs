@@ -1,8 +1,5 @@
-#![feature(plugin)]
-#![feature(std_misc)]
-#![feature(collections)]
-#![plugin(stainless)]
 extern crate clap;
+#[cfg(not(test))]
 use clap::{Arg, App};
 
 #[macro_use] extern crate log;
@@ -16,7 +13,7 @@ extern crate capnpc;
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
 mod raw_data_point_capnp {
-    include!("./messaging/schema/raw_data_point_capnp.rs");
+    include!(concat!(env!("OUT_DIR"), "/messaging/schema/raw_data_point_capnp.rs"));
 }
 
 mod messaging;

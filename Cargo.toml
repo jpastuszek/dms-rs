@@ -2,6 +2,10 @@
 name = "rdms-test"
 version = "0.0.1"
 authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
+build = "build.rs"
+
+[build-dependencies]
+capnpc = "*"
 
 [dependencies]
 clap = "*"
@@ -11,5 +15,4 @@ nanomsg = "*"
 chrono = "*"
 capnp = "*"
 capnpc = "*"
-stainless = "*"
 

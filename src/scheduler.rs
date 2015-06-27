@@ -2,8 +2,8 @@ use std::fmt;
 use std::ops::Fn;
 use chrono::{DateTime, UTC, Duration};
 use std::collections::BTreeMap;
-use std::collections::Bound::{Unbounded, Excluded};
 use std::cmp::Ordering;
+#[cfg(not(test))]
 use std::thread::sleep_ms;
 
 pub struct Task<C, O, E> {
@@ -43,14 +43,17 @@ pub trait TimeSource {
     fn wait(&mut self, duration: Duration);
 }
 
+#[cfg(not(test))]
 pub struct RealTimeSource;
 
+#[cfg(not(test))]
 impl RealTimeSource {
     fn new() -> RealTimeSource {
         RealTimeSource
     }
 }
 
+#[cfg(not(test))]
 impl TimeSource for RealTimeSource {
     fn now(&self) -> DateTime<UTC> {
         UTC::now()
@@ -121,7 +124,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
             Some((&run_group, _)) => {
                 match run_group.cmp(&current_schedule) {
                     Ordering::Greater => RunAction::Wait((self.offset + self.to_duration(run_group)) - now),
-                    Ordering::Less => RunAction::Skip(self.tasks.range(Unbounded, Excluded(&current_schedule)).map(|(run_group, _)| run_group.clone()).collect()),
+                    Ordering::Less => RunAction::Skip(self.tasks.iter().take_while(|&(&run_group, &_)| run_group < current_schedule).map(|(run_group, _)| run_group.clone()).collect()),
                     Ordering::Equal => RunAction::Run(run_group)
                 }
             }
@@ -213,8 +216,11 @@ mod test {
         }
     }
 
-    describe! task {
-        it "should be crated with closure representing the task that gets collector" {
+    mod task {
+        pub use super::*;
+
+        #[test]
+        fn should_be_crated_with_closure_representing_the_task_that_gets_collector() {
             let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|collector| {
                 collector.push(1);
                 collector.push(2);
@@ -229,7 +235,8 @@ mod test {
             assert_eq!(collector, vec![1, 2, 1, 2]);
         }
 
-        it "should be crated with closure representing the task that returns something" {
+        #[test]
+        fn should_be_crated_with_closure_representing_the_task_that_returns_something() {
             let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), Box::new(|_| {
                 Ok(1)
             }));
@@ -242,8 +249,11 @@ mod test {
             assert_eq!(out, vec![Ok(1), Ok(1)]);
         }
 
-        describe! next_schedule {
-            it "should provide next run schedule for this task" {
+        mod next_schedule {
+            pub use super::*;
+
+            #[test]
+            fn should_provide_next_run_schedule_for_this_task() {
                 let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), Box::new(|_| { Ok(()) }));
 
                 assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
@@ -252,47 +262,63 @@ mod test {
         }
     }
 
-    describe! scheduler {
-        before_each {
-            let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+    mod scheduler {
+        pub use super::*;
 
-            let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), Box::new(|_| {
-                Ok(1)
-            }));
-            let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), Box::new(|_| {
-                Ok(2)
-            }));
-            let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), Box::new(|_| {
-                Ok(3)
-            }));
-            let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), Box::new(|_| {
-                Ok(4)
-            }));
+        macro_rules! subject {
+            () => {{
+                let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            scheduler.schedule(task1);
-            scheduler.schedule(task2);
-            scheduler.schedule(task3);
-            scheduler.schedule(task4);
+                let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), Box::new(|_| {
+                    Ok(1)
+                }));
+                let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), Box::new(|_| {
+                    Ok(2)
+                }));
+                let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), Box::new(|_| {
+                    Ok(3)
+                }));
+                let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), Box::new(|_| {
+                    Ok(4)
+                }));
+
+                scheduler.schedule(task1);
+                scheduler.schedule(task2);
+                scheduler.schedule(task3);
+                scheduler.schedule(task4);
+
+                scheduler
+            }}
         }
 
-        describe! run_action {
-            it "should return Wait with duration if there is nothing to do yet" {
+        mod run_action {
+            pub use super::*;
+
+            #[test]
+            fn should_return_wait_with_duration_if_there_is_nothing_to_do_yet() {
+                let mut scheduler = subject!();
                 assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::seconds(1)));
                 scheduler.time_source.wait(Duration::milliseconds(700));
                 assert_eq!(scheduler.run_action(), RunAction::Wait(Duration::milliseconds(300)));
             }
 
-            it "should return Run with run group when time is just right" {
+            #[test]
+            fn should_return_run_with_run_group_when_time_is_just_right() {
+                let mut scheduler = subject!();
                 scheduler.time_source.wait(Duration::milliseconds(1000));
                 assert_eq!(scheduler.run_action(), RunAction::Run(2));
             }
 
-            it "should return Run with run group when time is still within same run group" {
+            #[test]
+            fn should_return_run_with_run_group_when_time_is_still_within_same_run_group() {
+                let mut scheduler = subject!();
                 scheduler.time_source.wait(Duration::milliseconds(1499));
                 assert_eq!(scheduler.run_action(), RunAction::Run(2));
             }
 
-            it "should return Skip with list of skipped run groups when time is after first run group" {
+            #[test]
+            fn should_return_skip_with_list_of_skipped_run_groups_when_time_is_after_first_run_group() {
+                let mut scheduler = subject!();
                 scheduler.time_source.wait(Duration::milliseconds(1500));
                 assert_eq!(scheduler.run_action(), RunAction::Skip(vec![2]));
                 scheduler.time_source.wait(Duration::milliseconds(1500));
@@ -300,7 +326,9 @@ mod test {
             }
         }
 
-        it "should execute tasks given time progress until empty" {
+        #[test]
+        fn should_execute_tasks_given_time_progress_until_empty() {
+            let mut scheduler = subject!();
             let out = scheduler.run(&mut ());
             assert_eq!(out, Ok(vec![Ok(1), Ok(2)]));
 
@@ -314,7 +342,9 @@ mod test {
             assert_eq!(out, Err(SchedulerRunError::ScheduleEmpty));
         }
 
-        it "should report skipped tasks if time progresses over run group" {
+        #[test]
+        fn should_report_skipped_tasks_if_time_progresses_over_run_group() {
+            let mut scheduler = subject!();
             scheduler.time_source.wait(Duration::milliseconds(1500));
             let out = scheduler.run(&mut ());
             assert_eq!(out, Err(SchedulerRunError::TasksSkipped(2)));

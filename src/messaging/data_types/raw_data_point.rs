@@ -1,7 +1,8 @@
+use std::io::BufReader;
+use std::io::Cursor;
 use capnp::serialize_packed;
 use capnp::{MessageBuilder, MallocMessageBuilder, MessageReader};
 use capnp::message::ReaderOptions;
-use capnp::io::ArrayInputStream;
 use chrono::{DateTime, UTC, Timelike};
 
 use super::super::serde::*;
@@ -54,7 +55,7 @@ impl SerDeMessage for RawDataPoint {
                 }
 
                 let mut data = Vec::new();
-                try!(serialize_packed::write_packed_message_unbuffered(&mut data, &mut message));
+                try!(serialize_packed::write_message(&mut data, &mut message));
                 Ok(data)
             },
             Encoding::Plain => unimplemented!()
@@ -68,7 +69,8 @@ impl SerDeMessage for RawDataPoint {
     fn from_bytes(bytes: &Vec<u8>, encoding: Encoding) -> Result<Self, DeserializationError<Self>> {
         match encoding {
             Encoding::Capnp => {
-                let reader = try!(serialize_packed::new_reader_unbuffered(ArrayInputStream::new(bytes), ReaderOptions::new()));
+                let mut buf_reader = BufReader::new(Cursor::new(bytes.clone()));
+                let reader = try!(serialize_packed::read_message(&mut buf_reader, ReaderOptions::new()));
                 let raw_data_point = try!(reader.get_root::<::raw_data_point_capnp::raw_data_point::Reader>());
 
                 Ok(

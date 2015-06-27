@@ -1,5 +1,4 @@
 use std::thread;
-use std::thread::JoinGuard;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 
@@ -8,26 +7,25 @@ use chrono::{DateTime, UTC};
 
 use messaging::*;
 
-pub struct CollectorThread<'a> {
-    // NOTE: this needs to be before thread so channel is dropped before we join tread
-    sink: SyncSender<Box<RawDataPoint>>,
-    // NOTE: this is actually needed to join the thread after SyncSender is closed
-    #[allow(dead_code)]
-    thread: JoinGuard<'a, ()>,
+pub struct CollectorThread {
+    sink: SyncSender<Box<RawDataPoint>>
 }
 
-impl<'a> CollectorThread<'a> {
-    pub fn spawn(data_processor_address: &'a str) -> CollectorThread<'a> {
+impl CollectorThread {
+    pub fn spawn<S>(data_processor_address: S) -> CollectorThread where S: Into<String> {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
-        let thread = thread::scoped(move || {
+        let local_data_processor_address = data_processor_address.into();
+        let _ = thread::spawn(move || {
             let mut socket = Socket::new(Protocol::Push).ok().expect("Cannot create push socket!");
-            let mut _endpoint = match socket.connect(data_processor_address) {
+            let mut _endpoint = match socket.connect(&local_data_processor_address) {
                 Ok(ep) => ep,
-                Err(error) => panic!("Failed to connect data processor at '{}': {}", data_processor_address, error)
+                Err(error) => panic!("Failed to connect data processor at '{}': {}", local_data_processor_address, error)
             };
 
             loop {
+                // TODO: The mpsc::Receiver type can now be converted into an iterator with
+                // into_iter on the IntoIterator trait.
                 match rx.recv() {
                     Ok(raw_data_point) => {
                         socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp).unwrap();
@@ -41,7 +39,6 @@ impl<'a> CollectorThread<'a> {
         });
 
         CollectorThread {
-            thread: thread,
             sink: tx
         }
     }
@@ -87,16 +84,21 @@ mod test {
     pub use nanomsg::{Socket, Protocol};
     pub use std::io::Read;
 
-    describe! collector_thread {
-        it "should shut down after going out of scope" {
+    mod collector_thread {
+        pub use super::*;
+        #[test]
+        fn should_shut_down_after_going_out_of_scope() {
             {
                 let _ = CollectorThread::spawn("ipc:///tmp/test-collector1.ipc");
             }
             assert!(true);
         }
 
-        describe! collector {
-             it "should pass data points to nanosmg pull socket" {
+        mod collector {
+            pub use super::*;
+
+            #[test]
+             fn should_pass_data_points_to_nanosmg_pull_socket() {
                 let mut pull = Socket::new(Protocol::Pull).unwrap();
                 let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
                 {

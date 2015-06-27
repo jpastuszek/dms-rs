@@ -113,8 +113,10 @@ mod test {
         }}
     }
 
-    describe! message_header {
-        it "should be serializable" {
+    mod message_header {
+        pub use super::*;
+        #[test]
+        fn should_be_serializable() {
             let header = MessageHeader {
                 data_type: DataType::RawDataPoint,
                 topic: "hello".to_string(),
@@ -126,8 +128,11 @@ mod test {
             assert_eq!(bytes, "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes());
         }
 
-        describe! deserialization {
-            it "should deserialize correctly formated message header" {
+        mod deserialization {
+            pub use super::*;
+
+            #[test]
+            fn should_deserialize_correctly_formated_message_header() {
                 let bytes = "RawDataPoint/hello\n42\ncapnp\n\n".to_string().into_bytes();
 
                 let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
@@ -137,7 +142,8 @@ mod test {
                 assert_eq!(header.encoding, Encoding::Capnp);
             }
 
-            it "should deserialize message with empty topic" {
+            #[test]
+            fn should_deserialize_message_with_empty_topic() {
                 let bytes = "RawDataPoint/\n42\ncapnp\n\n".to_string().into_bytes();
 
                 let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
@@ -147,7 +153,8 @@ mod test {
                 assert_eq!(header.encoding, Encoding::Capnp);
             }
 
-            it "should deserialize message with extra sections" {
+            #[test]
+            fn should_deserialize_message_with_extra_sections() {
                 let bytes = "RawDataPoint/\n42\ncapnp\nblah\n\n".to_string().into_bytes();
 
                 let header = MessageHeader::from_bytes(&bytes, Encoding::Plain).unwrap();
@@ -157,8 +164,11 @@ mod test {
                 assert_eq!(header.encoding, Encoding::Capnp);
             }
 
-            describe! error_handling {
-                it "should provide error when not enought header sections are provided" {
+            mod error_handling {
+                pub use super::*;
+
+                #[test]
+                fn should_provide_error_when_not_enought_header_sections_are_provided() {
                     {
                         let bytes = "RawDataPoint/hello\n42\n\n".to_string().into_bytes();
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
@@ -181,7 +191,8 @@ mod test {
                     }
                 }
 
-                it "should provide error when version is not a positive integer" {
+                #[test]
+                fn should_provide_error_when_version_is_not_a_positive_integer() {
                     {
                         let bytes = "RawDataPoint/hello\n-1\ncapnp\n\n".to_string().into_bytes();
                         let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
@@ -194,7 +205,8 @@ mod test {
                     }
                 }
 
-                it "should provide error when unknown encoding was found in the message" {
+                #[test]
+                fn should_provide_error_when_unknown_encoding_was_found_in_the_message() {
                     let bytes = "RawDataPoint/hello\n42\ncapn planet\n\n".to_string().into_bytes();
                     let result = MessageHeader::from_bytes(&bytes, Encoding::Plain);
                     assert_error_display_message!(result, "failed to deserializae message for type MessageHeader: unknown encoding: capn planet");

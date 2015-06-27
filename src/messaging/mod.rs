@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
-use std::marker::MarkerTrait;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::any::Any;
 use std::error::Error;
 use std::io::Error as IoError;
 use std::fmt;
@@ -29,13 +29,14 @@ impl fmt::Display for MessagingErrorKind {
     }
 }
 
-trait MessagingDirection: MarkerTrait + Debug {
+trait MessagingDirection: Debug + Any {
     fn direction_name() -> &'static str;
 }
 
 #[derive(Debug)]
 struct SendingDirection;
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ReceivingDirection;
 
 impl MessagingDirection for SendingDirection {
@@ -130,13 +131,17 @@ mod test {
     pub use std::fmt::Write;
     pub use std::fmt::Debug;
 
-    describe! nanomsg_socket_extensions {
-        describe! send_message {
-            it "should allow sending message with header and capnp serialized body" {
+    mod nanomsg_socket_extensions {
+        pub use super::*;
+        mod send_message {
+            pub use super::*;
+
+            #[test]
+            fn should_allow_sending_message_with_header_and_capnp_serialized_body() {
                 let mut pull = Socket::new(Protocol::Pull).unwrap();
                 let mut _endpoint = pull.bind("ipc:///tmp/test.ipc").unwrap();
 
-                let _ = thread::scoped(move || {
+                let thread = thread::spawn(move || {
                     let mut socket = Socket::new(Protocol::Push).unwrap();
                     let mut _endpoint = socket.connect("ipc:///tmp/test.ipc").unwrap();
                     let now = UTC::now();
@@ -166,6 +171,7 @@ mod test {
                     },
                     Err(error) => panic!("got error: {}", error)
                 }
+                thread.join().unwrap();
             }
         }
     }
