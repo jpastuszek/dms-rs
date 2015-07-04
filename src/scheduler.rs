@@ -6,10 +6,12 @@ use std::cmp::Ordering;
 #[cfg(not(test))]
 use std::thread::sleep_ms;
 
+type Action<C, O, E> = Box<Fn(&mut C) -> Result<O, E>>;
+
 pub struct Task<C, O, E> {
     interval: Duration,
     run_offset: DateTime<UTC>,
-    task: Box<Fn(&mut C) -> Result<O, E>>
+    task: Action<C, O, E>
 }
 
 impl<C, O, E> fmt::Debug for Task<C, O, E> {
@@ -19,7 +21,7 @@ impl<C, O, E> fmt::Debug for Task<C, O, E> {
 }
 
 impl<C, O, E> Task<C, O, E> {
-    fn new(interval: Duration, run_offset: DateTime<UTC>, task: Box<Fn(&mut C) -> Result<O, E>>) -> Task<C, O, E> {
+    fn new(interval: Duration, run_offset: DateTime<UTC>, task: Action<C, O, E>) -> Task<C, O, E> {
         assert!(interval > Duration::seconds(0)); // negative interval would make schedule go back in time!
         Task {
             interval: interval,
