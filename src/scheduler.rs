@@ -160,7 +160,8 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
             RunAction::Run(run_group) => {
                 let mut out;
                 {
-                    let ref run_tasks = self.tasks[&run_group];
+                    let run_tasks = self.tasks.get_mut(&run_group).unwrap();
+                    run_tasks.sort_by(|a, b| a.run_offset.cmp(&b.run_offset));
                     //println!("{:?}", run_tasks);
                     out = Vec::with_capacity(run_tasks.len());
 
@@ -345,6 +346,18 @@ mod test {
         }
 
         #[test]
+        fn should_run_tasks_in_order_of_their_actual_run_time() {
+            let mut scheduler = subject!();
+            let task5: Task<(),u8,()> = Task::new(Duration::milliseconds(1050), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                Ok(5)
+            }));
+            scheduler.schedule(task5);
+
+            let out = scheduler.run(&mut ());
+            assert_eq!(out, Ok(vec![Ok(1), Ok(5), Ok(2)])); // 1: 1000, 5: 1050, 2: 1100
+        }
+
+        #[test]
         fn should_execute_tasks_given_time_progress_until_empty() {
             let mut scheduler = subject!();
             let out = scheduler.run(&mut ());
@@ -361,17 +374,15 @@ mod test {
         }
 
         #[test]
-        fn schould_continue_running_if_it_has_a_perpetual_task_scheduled() {
+        fn should_continue_running_if_it_has_a_perpetual_task_scheduled() {
             let mut scheduler = subject!();
-
-            let task5: Task<(),u8,()> = Task::new(Duration::milliseconds(1001), UTC::now(), TaskBond::Perpetual, Box::new(|_| {
+            let task5: Task<(),u8,()> = Task::new(Duration::milliseconds(1010), UTC::now(), TaskBond::Perpetual, Box::new(|_| {
                 Ok(5)
             }));
-
             scheduler.schedule(task5);
 
             let out = scheduler.run(&mut ());
-            assert_eq!(out, Ok(vec![Ok(1), Ok(2), Ok(5)]));
+            assert_eq!(out, Ok(vec![Ok(1), Ok(5), Ok(2)]));
 
             let out = scheduler.run(&mut ());
             assert_eq!(out, Ok(vec![Ok(3), Ok(5)]));
