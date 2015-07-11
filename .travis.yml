@@ -1,0 +1,10 @@
+os: osx
+language: rust
+rust:
+    - nightly
+    - beta
+    - stable
+before_install:
+    - brew update
+    - brew install nanomsg
+    - brew install capnp
