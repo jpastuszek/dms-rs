@@ -1,8 +1,0 @@
-sudo: required
-language: rust
-rust:
-    - nightly
-    - beta
-    - stable
-install:
-    - make deps
