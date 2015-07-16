@@ -40,3 +40,72 @@ fn main() {
     collector.collect("myserver", "os/cpu/usage", "user", collector::DataValue::Float(0.4));
 }
 
+#[cfg(test)]
+mod test {
+    pub use super::*;
+    pub use messaging::*;
+    pub use nanomsg::{Socket, Protocol};
+    pub use std::io::Read;
+    pub use chrono::{DateTime, UTC, Duration};
+    pub use std::thread::sleep_ms;
+
+    pub use collector::{CollectorThread, Collector};
+    pub use scheduler::{TimeSource, Scheduler};
+
+    pub struct FakeTimeSource {
+        now: DateTime<UTC>
+    }
+
+    impl FakeTimeSource {
+        fn new() -> FakeTimeSource {
+            FakeTimeSource {
+                now: UTC::now()
+            }
+        }
+    }
+
+    impl TimeSource for FakeTimeSource {
+        fn now(&self) -> DateTime<UTC> {
+            self.now
+        }
+
+        fn wait(&mut self, duration: Duration) {
+            self.now = self.now + duration;
+        }
+    }
+
+    #[test]
+    fn scheduling_data_collection() {
+        let mut scheduler: Scheduler<Collector, (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+
+        let mut pull = Socket::new(Protocol::Pull).unwrap();
+        let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
+        {
+            let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+
+            let mut collector = collector_thread.new_collector();
+
+            scheduler.after(Duration::milliseconds(1000), Box::new(|collector| {
+                collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+                collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
+                Ok(())
+            }));
+
+            let out = scheduler.run(&mut collector);
+            assert_eq!(out, Ok(vec![Ok(())]));
+
+            let mut msg = Vec::new();
+            pull.read_to_end(&mut msg).unwrap();
+            let msg_string = String::from_utf8_lossy(&msg);
+            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+            assert!(msg_string.contains("myserver"));
+
+            let mut msg = Vec::new();
+            pull.read_to_end(&mut msg).unwrap();
+            let msg_string = String::from_utf8_lossy(&msg);
+            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+            assert!(msg_string.contains("foobar"));
+        }
+    }
+}
+

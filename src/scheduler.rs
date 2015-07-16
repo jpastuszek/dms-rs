@@ -6,14 +6,14 @@ use std::cmp::Ordering;
 #[cfg(not(test))]
 use std::thread::sleep_ms;
 
-type Action<C, O, E> = Box<Fn(&mut C) -> Result<O, E>>;
+pub type Action<C, O, E> = Box<Fn(&mut C) -> Result<O, E>>;
 
-pub enum TaskBond {
+enum TaskBond {
     OneOff,
     Perpetual
 }
 
-pub struct Task<C, O, E> {
+struct Task<C, O, E> {
     interval: Duration,
     run_offset: DateTime<UTC>,
     task: Action<C, O, E>,
@@ -108,7 +108,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         }
     }
 
-    pub fn schedule(&mut self, mut task: Task<C, O, E>) {
+    fn schedule(&mut self, mut task: Task<C, O, E>) {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -124,7 +124,15 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         //println!("{:?}", self.tasks);
     }
 
-    pub fn run_action(&self) -> RunAction {
+    pub fn after(&mut self, duration: Duration, action: Action<C, O, E>) {
+        self.schedule(Task::new(duration, UTC::now(), TaskBond::OneOff, action));
+    }
+
+    pub fn every(&mut self, duration: Duration, action: Action<C, O, E>) {
+        self.schedule(Task::new(duration, UTC::now(), TaskBond::Perpetual, action));
+    }
+
+    fn run_action(&self) -> RunAction {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -207,6 +215,44 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
     }
 }
 
+#[test]
+fn should_be_crated_with_closure_representing_the_task_that_gets_collector() {
+    let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|collector| {
+        collector.push(1);
+        collector.push(2);
+        Ok(())
+    }));
+
+    let mut collector = Vec::new();
+
+    let _ = task.run(&mut collector);
+    let _ = task.run(&mut collector);
+
+    assert_eq!(collector, vec![1, 2, 1, 2]);
+}
+
+#[test]
+fn should_be_crated_with_closure_representing_the_task_that_returns_something() {
+    let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+        Ok(1)
+    }));
+
+    let mut out = Vec::new();
+
+    out.push(task.run(&mut ()));
+    out.push(task.run(&mut ()));
+
+    assert_eq!(out, vec![Ok(1), Ok(1)]);
+}
+
+#[test]
+fn should_provide_next_run_schedule_for_this_task() {
+    let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), TaskBond::OneOff, Box::new(|_| { Ok(()) }));
+
+    assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
+    assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
+}
+
 #[cfg(test)]
 mod test {
     pub use super::*;
@@ -235,76 +281,25 @@ mod test {
         }
     }
 
-    mod task {
-        pub use super::*;
-
-        #[test]
-        fn should_be_crated_with_closure_representing_the_task_that_gets_collector() {
-            let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|collector| {
-                collector.push(1);
-                collector.push(2);
-                Ok(())
-            }));
-
-            let mut collector = Vec::new();
-
-            let _ = task.run(&mut collector);
-            let _ = task.run(&mut collector);
-
-            assert_eq!(collector, vec![1, 2, 1, 2]);
-        }
-
-        #[test]
-        fn should_be_crated_with_closure_representing_the_task_that_returns_something() {
-            let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|_| {
-                Ok(1)
-            }));
-
-            let mut out = Vec::new();
-
-            out.push(task.run(&mut ()));
-            out.push(task.run(&mut ()));
-
-            assert_eq!(out, vec![Ok(1), Ok(1)]);
-        }
-
-        mod next_schedule {
-            pub use super::*;
-
-            #[test]
-            fn should_provide_next_run_schedule_for_this_task() {
-                let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), TaskBond::OneOff, Box::new(|_| { Ok(()) }));
-
-                assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
-                assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
-            }
-        }
-    }
-
     mod scheduler {
         pub use super::*;
 
         macro_rules! subject {
             () => {{
-                let mut scheduler = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+                let mut scheduler: Scheduler<(), u8, (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-                let task1: Task<(),u8,()> = Task::new(Duration::milliseconds(1000), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                scheduler.after(Duration::milliseconds(1000), Box::new(|_| {
                     Ok(1)
                 }));
-                let task2: Task<(),u8,()> = Task::new(Duration::milliseconds(1100), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                scheduler.after(Duration::milliseconds(1100), Box::new(|_| {
                     Ok(2)
                 }));
-                let task3: Task<(),u8,()> = Task::new(Duration::milliseconds(2100), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                scheduler.after(Duration::milliseconds(2100), Box::new(|_| {
                     Ok(3)
                 }));
-                let task4: Task<(),u8,()> = Task::new(Duration::milliseconds(2500), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                scheduler.after(Duration::milliseconds(2500), Box::new(|_| {
                     Ok(4)
                 }));
-
-                scheduler.schedule(task1);
-                scheduler.schedule(task2);
-                scheduler.schedule(task3);
-                scheduler.schedule(task4);
 
                 scheduler
             }}
@@ -348,10 +343,9 @@ mod test {
         #[test]
         fn should_run_tasks_in_order_of_their_actual_run_time() {
             let mut scheduler = subject!();
-            let task5: Task<(),u8,()> = Task::new(Duration::milliseconds(1050), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+            scheduler.after(Duration::milliseconds(1050), Box::new(|_| {
                 Ok(5)
             }));
-            scheduler.schedule(task5);
 
             let out = scheduler.run(&mut ());
             assert_eq!(out, Ok(vec![Ok(1), Ok(5), Ok(2)])); // 1: 1000, 5: 1050, 2: 1100
@@ -376,10 +370,9 @@ mod test {
         #[test]
         fn should_continue_running_if_it_has_a_perpetual_task_scheduled() {
             let mut scheduler = subject!();
-            let task5: Task<(),u8,()> = Task::new(Duration::milliseconds(1010), UTC::now(), TaskBond::Perpetual, Box::new(|_| {
+            scheduler.every(Duration::milliseconds(1010), Box::new(|_| {
                 Ok(5)
             }));
-            scheduler.schedule(task5);
 
             let out = scheduler.run(&mut ());
             assert_eq!(out, Ok(vec![Ok(1), Ok(5), Ok(2)]));
