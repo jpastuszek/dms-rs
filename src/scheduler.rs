@@ -215,74 +215,77 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
     }
 }
 
-#[test]
-fn should_be_crated_with_closure_representing_the_task_that_gets_collector() {
-    let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|collector| {
-        collector.push(1);
-        collector.push(2);
-        Ok(())
-    }));
-
-    let mut collector = Vec::new();
-
-    let _ = task.run(&mut collector);
-    let _ = task.run(&mut collector);
-
-    assert_eq!(collector, vec![1, 2, 1, 2]);
-}
-
-#[test]
-fn should_be_crated_with_closure_representing_the_task_that_returns_something() {
-    let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|_| {
-        Ok(1)
-    }));
-
-    let mut out = Vec::new();
-
-    out.push(task.run(&mut ()));
-    out.push(task.run(&mut ()));
-
-    assert_eq!(out, vec![Ok(1), Ok(1)]);
-}
-
-#[test]
-fn should_provide_next_run_schedule_for_this_task() {
-    let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), TaskBond::OneOff, Box::new(|_| { Ok(()) }));
-
-    assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
-    assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
-}
-
 #[cfg(test)]
 mod test {
-    pub use super::*;
-    pub use chrono::{DateTime, UTC, Duration};
-    pub use std::thread::sleep_ms;
+    mod task {
+        use super::super::{Task, TaskBond};
+        use chrono::{UTC, Duration};
 
-    pub struct FakeTimeSource {
-        now: DateTime<UTC>
-    }
+        #[test]
+        fn crated_with_closure_gets_passed_collector() {
+            let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|collector| {
+                collector.push(1);
+                collector.push(2);
+                Ok(())
+            }));
 
-    impl FakeTimeSource {
-        fn new() -> FakeTimeSource {
-            FakeTimeSource {
-                now: UTC::now()
-            }
+            let mut collector = Vec::new();
+
+            let _ = task.run(&mut collector);
+            let _ = task.run(&mut collector);
+
+            assert_eq!(collector, vec![1, 2, 1, 2]);
         }
-    }
 
-    impl TimeSource for FakeTimeSource {
-        fn now(&self) -> DateTime<UTC> {
-            self.now
+        #[test]
+        fn crated_with_closure_returns_value() {
+            let task: Task<(), u8, ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|_| {
+                Ok(1)
+            }));
+
+            let mut out = Vec::new();
+
+            out.push(task.run(&mut ()));
+            out.push(task.run(&mut ()));
+
+            assert_eq!(out, vec![Ok(1), Ok(1)]);
         }
 
-        fn wait(&mut self, duration: Duration) {
-            self.now = self.now + duration;
+        #[test]
+        fn provides_next_run_schedule() {
+            let mut task: Task<(), (), ()> = Task::new(Duration::seconds(42), UTC::now(), TaskBond::OneOff, Box::new(|_| { Ok(()) }));
+
+            assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
+            assert_eq!(task.next_schedule() + Duration::seconds(42), task.next_schedule());
         }
     }
 
     mod scheduler {
-        pub use super::*;
+        pub use super::super::*;
+        pub use chrono::{DateTime, UTC, Duration};
+        pub use std::thread::sleep_ms;
+
+        pub struct FakeTimeSource {
+            now: DateTime<UTC>
+        }
+
+        impl FakeTimeSource {
+            fn new() -> FakeTimeSource {
+                FakeTimeSource {
+                    now: UTC::now()
+                }
+            }
+        }
+
+        impl TimeSource for FakeTimeSource {
+            fn now(&self) -> DateTime<UTC> {
+                self.now
+            }
+
+            fn wait(&mut self, duration: Duration) {
+                self.now = self.now + duration;
+            }
+        }
 
         macro_rules! subject {
             () => {{
