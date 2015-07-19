@@ -10,6 +10,8 @@ extern crate chrono;
 extern crate capnp;
 extern crate capnpc;
 
+extern crate threadpool;
+
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
 mod raw_data_point_capnp {
@@ -42,15 +44,16 @@ fn main() {
 
 #[cfg(test)]
 mod test {
-    pub use super::*;
-    pub use messaging::*;
-    pub use nanomsg::{Socket, Protocol};
-    pub use std::io::Read;
-    pub use chrono::{DateTime, UTC, Duration};
-    pub use std::thread::sleep_ms;
+    use super::*;
+    use messaging::*;
+    use nanomsg::{Socket, Protocol};
+    use std::io::Read;
+    use chrono::{DateTime, UTC, Duration};
+    use std::thread::sleep_ms;
 
-    pub use collector::{CollectorThread, Collector};
-    pub use scheduler::{TimeSource, Scheduler};
+    use collector::{CollectorThread, Collector};
+    use scheduler::{TimeSource, Scheduler};
+    use threadpool::ThreadPool;
 
     pub struct FakeTimeSource {
         now: DateTime<UTC>
@@ -76,22 +79,24 @@ mod test {
 
     #[test]
     fn scheduling_data_collection() {
-        let mut scheduler: Scheduler<Collector, (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
-
         let mut pull = Socket::new(Protocol::Pull).unwrap();
         let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
         {
             let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+            let probe_thread_pool = ThreadPool::new(10);
+            let mut scheduler: Scheduler<(&CollectorThread, &ThreadPool), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            let mut collector = collector_thread.new_collector();
-
-            scheduler.after(Duration::milliseconds(1000), Box::new(|collector| {
-                collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-                collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
+            scheduler.after(Duration::milliseconds(1000), Box::new(|probe| {
+                let &mut (ref collector_thread, ref probe_thread_pool) = probe;
+                let mut collector = collector_thread.new_collector();
+                probe_thread_pool.execute(move || {
+                    collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+                    collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
+                });
                 Ok(())
             }));
 
-            let out = scheduler.run(&mut collector);
+            let out = scheduler.run(&mut (&collector_thread, &probe_thread_pool));
             assert_eq!(out, Ok(vec![Ok(())]));
 
             let mut msg = Vec::new();
