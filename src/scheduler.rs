@@ -6,28 +6,28 @@ use std::cmp::Ordering;
 #[cfg(not(test))]
 use std::thread::sleep_ms;
 
-pub type Action<C, O, E> = Box<Fn(&mut C) -> Result<O, E>>;
+pub type Action<S, O, E> = Box<Fn(&mut S) -> Result<O, E>>;
 
 enum TaskBond {
     OneOff,
     Perpetual
 }
 
-struct Task<C, O, E> {
+struct Task<S, O, E> {
     interval: Duration,
     run_offset: DateTime<UTC>,
-    task: Action<C, O, E>,
+    task: Action<S, O, E>,
     bond: TaskBond
 }
 
-impl<C, O, E> fmt::Debug for Task<C, O, E> {
+impl<S, O, E> fmt::Debug for Task<S, O, E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Task({} +{})", self.run_offset, self.interval.num_milliseconds())
     }
 }
 
-impl<C, O, E> Task<C, O, E> {
-    fn new(interval: Duration, run_offset: DateTime<UTC>, bond: TaskBond, task: Action<C, O, E>) -> Task<C, O, E> {
+impl<S, O, E> Task<S, O, E> {
+    fn new(interval: Duration, run_offset: DateTime<UTC>, bond: TaskBond, task: Action<S, O, E>) -> Task<S, O, E> {
         assert!(interval > Duration::seconds(0)); // negative interval would make schedule go back in time!
         Task {
             interval: interval,
@@ -37,8 +37,8 @@ impl<C, O, E> Task<C, O, E> {
         }
     }
 
-    fn run(&self, collector: &mut C) -> Result<O, E> {
-        (self.task)(collector)
+    fn run(&self, state: &mut S) -> Result<O, E> {
+        (self.task)(state)
     }
 
     fn next_schedule(&mut self) -> DateTime<UTC> {
@@ -90,15 +90,15 @@ pub enum RunAction {
     Run(RunGroup)
 }
 
-pub struct Scheduler<C, O, E, T> where T: TimeSource {
+pub struct Scheduler<S, O, E, T> where T: TimeSource {
     offset: DateTime<UTC>,
     group_interval: Duration,
-    tasks: BTreeMap<RunGroup, Vec<Task<C, O, E>>>,
+    tasks: BTreeMap<RunGroup, Vec<Task<S, O, E>>>,
     time_source: T
 }
 
-impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
-    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<C, O, E, T>
+impl<S, O, E, T> Scheduler<S, O, E, T> where T: TimeSource {
+    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<S, O, E, T>
         where T: TimeSource {
         Scheduler {
             offset: time_source.now(),
@@ -108,7 +108,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         }
     }
 
-    fn schedule(&mut self, mut task: Task<C, O, E>) {
+    fn schedule(&mut self, mut task: Task<S, O, E>) {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -124,11 +124,11 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         //println!("{:?}", self.tasks);
     }
 
-    pub fn after(&mut self, duration: Duration, action: Action<C, O, E>) {
+    pub fn after(&mut self, duration: Duration, action: Action<S, O, E>) {
         self.schedule(Task::new(duration, UTC::now(), TaskBond::OneOff, action));
     }
 
-    pub fn every(&mut self, duration: Duration, action: Action<C, O, E>) {
+    pub fn every(&mut self, duration: Duration, action: Action<S, O, E>) {
         self.schedule(Task::new(duration, UTC::now(), TaskBond::Perpetual, action));
     }
 
@@ -148,12 +148,12 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
         }
     }
 
-    pub fn run(&mut self, collector: &mut C) -> Result<Vec<Result<O, E>>, SchedulerRunError> {
+    pub fn run(&mut self, state: &mut S) -> Result<Vec<Result<O, E>>, SchedulerRunError> {
         match self.run_action() {
             RunAction::None => Err(SchedulerRunError::ScheduleEmpty),
             RunAction::Wait(duration) => {
                 self.time_source.wait(duration);
-                self.run(collector)
+                self.run(state)
             },
             RunAction::Skip(run_groups) => {
                 let count = run_groups.iter().fold(0, |sum, run_group| {
@@ -174,7 +174,7 @@ impl<C, O, E, T> Scheduler<C, O, E, T> where T: TimeSource {
                     out = Vec::with_capacity(run_tasks.len());
 
                     for run_task in run_tasks {
-                        out.push(run_task.run(collector));
+                        out.push(run_task.run(state));
                     }
                 }
 
@@ -222,19 +222,19 @@ mod test {
         use chrono::{UTC, Duration};
 
         #[test]
-        fn crated_with_closure_gets_passed_collector() {
-            let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|collector| {
-                collector.push(1);
-                collector.push(2);
+        fn crated_with_closure_gets_passed_mutable_state() {
+            let task: Task<Vec<u8>, (), ()> = Task::new(Duration::seconds(1), UTC::now(), TaskBond::OneOff, Box::new(|state| {
+                state.push(1);
+                state.push(2);
                 Ok(())
             }));
 
-            let mut collector = Vec::new();
+            let mut state = Vec::new();
 
-            let _ = task.run(&mut collector);
-            let _ = task.run(&mut collector);
+            let _ = task.run(&mut state);
+            let _ = task.run(&mut state);
 
-            assert_eq!(collector, vec![1, 2, 1, 2]);
+            assert_eq!(state, vec![1, 2, 1, 2]);
         }
 
         #[test]

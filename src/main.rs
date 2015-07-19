@@ -44,14 +44,12 @@ fn main() {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use messaging::*;
     use nanomsg::{Socket, Protocol};
     use std::io::Read;
     use chrono::{DateTime, UTC, Duration};
-    use std::thread::sleep_ms;
 
-    use collector::{CollectorThread, Collector};
+    use collector::CollectorThread;
     use scheduler::{TimeSource, Scheduler};
     use threadpool::ThreadPool;
 
