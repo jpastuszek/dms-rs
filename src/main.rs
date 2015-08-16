@@ -21,6 +21,7 @@ mod raw_data_point_capnp {
 mod messaging;
 mod collector;
 mod scheduler;
+mod probe;
 
 #[cfg(not(test))]
 fn main() {
@@ -53,6 +54,12 @@ mod test {
     use scheduler::{TimeSource, Scheduler};
     use threadpool::ThreadPool;
 
+    use probe::Probe;
+    use probe::ProbeModule;
+    use probe::ProbeRunMode;
+    use probe::ProbeRunner;
+    use collector::Collector;
+
     pub struct FakeTimeSource {
         now: DateTime<UTC>
     }
@@ -75,12 +82,82 @@ mod test {
         }
     }
 
+    struct MockProbe {
+        collector: Collector
+    }
+    //unsafe impl Send for MockProbe {}
+
+    impl Probe for MockProbe {
+        fn run(mut self) -> Result<(), String> {
+            self.collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+            self.collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
+            Ok(())
+        }
+    }
+
+    #[allow(dead_code)]
+    struct MockProbeModule {
+        test: u8
+    }
+    impl ProbeModule for MockProbeModule {
+        type P = MockProbe;
+
+        fn run_mode() -> ProbeRunMode {
+            ProbeRunMode::Thread
+        }
+
+        fn probe(&self, collector: Collector) -> Box<Self::P> {
+            Box::new(MockProbe { collector: collector })
+        }
+    }
+
     #[test]
-    fn scheduling_data_collection() {
+    fn scheduling_data_collection_with_probe_runner() {
         let mut pull = Socket::new(Protocol::Pull).unwrap();
         let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
         {
             let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+            let probe_runner = ProbeRunner::new(10);
+            let probe_module = MockProbeModule {test: 0};
+
+            {
+                let mut scheduler: Scheduler<(&CollectorThread, &ProbeRunner), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+
+                scheduler.after(Duration::milliseconds(1000), Box::new(move |state| {
+                    let &mut (ref collector_thread, ref probe_runner) = state;
+
+                    let collector = collector_thread.new_collector();
+                    let probe = probe_module.probe(collector);
+
+                    probe_runner.run(probe, MockProbeModule::run_mode());
+
+                    Ok(())
+                }));
+
+                let out = scheduler.run(&mut (&collector_thread, &probe_runner));
+                assert_eq!(out, Ok(vec![Ok(())]));
+            }
+
+            let mut msg = Vec::new();
+            pull.read_to_end(&mut msg).unwrap();
+            let msg_string = String::from_utf8_lossy(&msg);
+            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+            assert!(msg_string.contains("myserver"));
+
+            let mut msg = Vec::new();
+            pull.read_to_end(&mut msg).unwrap();
+            let msg_string = String::from_utf8_lossy(&msg);
+            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
+            assert!(msg_string.contains("foobar"));
+        }
+    }
+
+    #[test]
+    fn scheduling_data_collection_manual() {
+        let mut pull = Socket::new(Protocol::Pull).unwrap();
+        let mut _endpoint = pull.bind("ipc:///tmp/test-collector2.ipc").unwrap();
+        {
+            let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector2.ipc");
             let probe_thread_pool = ThreadPool::new(10);
             let mut scheduler: Scheduler<(&CollectorThread, &ThreadPool), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
