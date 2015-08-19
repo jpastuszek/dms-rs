@@ -15,5 +15,5 @@ nanomsg = "*"
 chrono = "*"
 capnp = "*"
 capnpc = "*"
-threadpool = "~0.1"
+asynchronous = "~0.4"
 

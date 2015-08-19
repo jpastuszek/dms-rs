@@ -1,5 +1,5 @@
 use collector::Collector;
-use threadpool::ThreadPool;
+use asynchronous::{Deferred, ControlFlow};
 
 #[allow(dead_code)]
 pub enum ProbeRunMode {
@@ -12,7 +12,7 @@ pub trait ProbeModule {
     type P: Probe;
 
     fn run_mode() -> ProbeRunMode;
-    fn probe(&self, collector: Collector) -> Box<Self::P>;
+    fn probe(&self, collector: Collector) -> Self::P;
 }
 
 pub trait Probe: Send {
@@ -20,30 +20,53 @@ pub trait Probe: Send {
 }
 
 pub struct ProbeRunner {
-    thread_pool: ThreadPool
+    threaded: Vec<Deferred<(), String>>,
+    // Can't do Box<FnOnce> - try wrapping with sized object (InlineDeffered?)with pointer? + lifetime?
+    inline: Vec<Box<FnOnce() -> Result<(), String> + Send>>
 }
 
 impl ProbeRunner {
     pub fn new(threads: u16) -> ProbeRunner {
         ProbeRunner {
-            thread_pool: ThreadPool::new(threads as usize)
+            threaded: vec![],
+            inline: vec![]
         }
     }
 
-    pub fn run<P>(&self, probe: Box<P>, probe_run_mode: ProbeRunMode) where P: Probe + 'static {
+    pub fn push<P>(&mut self, probe: P, probe_run_mode: ProbeRunMode) where P: Probe + 'static {
         match probe_run_mode {
             ProbeRunMode::Inline => {
-                probe.run();
+                self.inline.push(Box::new(move || {
+                    probe.run()
+                }));
             },
             ProbeRunMode::Thread => {
-                self.thread_pool.execute(move || {
-                    probe.run();
-                });
+                self.threaded.push(Deferred::new(move || {
+                    probe.run()
+                }));
             }
         }
     }
 
-    //TODO: provide a way to collect run errors
+    pub fn run(self) {
+        let mut deferred = vec![];
+
+        let inline = self.inline;
+/* see http://stackoverflow.com/questions/30411594/moving-a-boxed-function
+        deferred.push(Deferred::new(move || {
+            for probe in inline.into_iter() {
+                probe();
+            }
+            Ok(())
+        }));
+        */
+
+        deferred.extend(self.threaded);
+        let promise = Deferred::vec_to_promise(deferred, ControlFlow::Parallel);
+
+        // TODO: handle errors from promises
+        promise.sync().unwrap();
+    }
 }
 
 

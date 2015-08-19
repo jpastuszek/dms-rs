@@ -10,7 +10,7 @@ extern crate chrono;
 extern crate capnp;
 extern crate capnpc;
 
-extern crate threadpool;
+extern crate asynchronous;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
@@ -52,7 +52,6 @@ mod test {
 
     use collector::CollectorThread;
     use scheduler::{TimeSource, Scheduler};
-    use threadpool::ThreadPool;
 
     use probe::Probe;
     use probe::ProbeModule;
@@ -106,8 +105,8 @@ mod test {
             ProbeRunMode::Thread
         }
 
-        fn probe(&self, collector: Collector) -> Box<Self::P> {
-            Box::new(MockProbe { collector: collector })
+        fn probe(&self, collector: Collector) -> Self::P {
+            MockProbe { collector: collector }
         }
     }
 
@@ -117,59 +116,26 @@ mod test {
         let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
         {
             let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
-            let probe_runner = ProbeRunner::new(10);
 
             let probe_module = MockProbeModule {test: 0};
 
-            let mut scheduler: Scheduler<(), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+            let mut scheduler: Scheduler<ProbeRunner, (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            scheduler.after(Duration::milliseconds(1000), Box::new(|_| {
+            let mut probe_runner = ProbeRunner::new(10);
+
+            scheduler.after(Duration::milliseconds(1000), Box::new(|probe_runner| {
                 let collector = collector_thread.new_collector();
                 let probe = probe_module.probe(collector);
 
-                probe_runner.run(probe, MockProbeModule::run_mode());
+                probe_runner.push(probe, MockProbeModule::run_mode());
 
                 Ok(())
             }));
 
-            let out = scheduler.run(&mut ());
+            let out = scheduler.run(&mut probe_runner);
             assert_eq!(out, Ok(vec![Ok(())]));
 
-            let mut msg = Vec::new();
-            pull.read_to_end(&mut msg).unwrap();
-            let msg_string = String::from_utf8_lossy(&msg);
-            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
-            assert!(msg_string.contains("myserver"));
-
-            let mut msg = Vec::new();
-            pull.read_to_end(&mut msg).unwrap();
-            let msg_string = String::from_utf8_lossy(&msg);
-            assert!(msg_string.contains("RawDataPoint/\n0\ncapnp\n\n"));
-            assert!(msg_string.contains("foobar"));
-        }
-    }
-
-    #[test]
-    fn scheduling_data_collection_manual() {
-        let mut pull = Socket::new(Protocol::Pull).unwrap();
-        let mut _endpoint = pull.bind("ipc:///tmp/test-collector2.ipc").unwrap();
-        {
-            let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector2.ipc");
-            let probe_thread_pool = ThreadPool::new(10);
-            let mut scheduler: Scheduler<(&CollectorThread, &ThreadPool), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
-
-            scheduler.after(Duration::milliseconds(1000), Box::new(|probe| {
-                let &mut (ref collector_thread, ref probe_thread_pool) = probe;
-                let mut collector = collector_thread.new_collector();
-                probe_thread_pool.execute(move || {
-                    collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
-                    collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
-                });
-                Ok(())
-            }));
-
-            let out = scheduler.run(&mut (&collector_thread, &probe_thread_pool));
-            assert_eq!(out, Ok(vec![Ok(())]));
+            probe_runner.run();
 
             let mut msg = Vec::new();
             pull.read_to_end(&mut msg).unwrap();
