@@ -87,7 +87,7 @@ mod test {
     //unsafe impl Send for MockProbe {}
 
     impl Probe for MockProbe {
-        fn run(mut self) -> Result<(), String> {
+        fn run(&mut self) -> Result<(), String> {
             self.collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
             self.collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));
             Ok(())
@@ -121,8 +121,6 @@ mod test {
 
             let mut scheduler: Scheduler<ProbeRunner, (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            let mut probe_runner = ProbeRunner::new(10);
-
             scheduler.after(Duration::milliseconds(1000), Box::new(|probe_runner| {
                 let collector = collector_thread.new_collector();
                 let probe = probe_module.probe(collector);
@@ -132,6 +130,7 @@ mod test {
                 Ok(())
             }));
 
+            let mut probe_runner = ProbeRunner::new(10);
             let out = scheduler.run(&mut probe_runner);
             assert_eq!(out, Ok(vec![Ok(())]));
 
