@@ -42,6 +42,8 @@ impl ProbeRunner {
             }
         }
     }
+
+    //TODO: provide a way to collect run errors
 }
 
 

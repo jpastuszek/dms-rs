@@ -118,13 +118,12 @@ mod test {
         {
             let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
             let probe_runner = ProbeRunner::new(10);
+
             let probe_module = MockProbeModule {test: 0};
 
-            let mut scheduler: Scheduler<(&CollectorThread, &ProbeRunner), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+            let mut scheduler: Scheduler<(), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-            scheduler.after(Duration::milliseconds(1000), Box::new(|state| {
-                let &mut (ref collector_thread, ref probe_runner) = state;
-
+            scheduler.after(Duration::milliseconds(1000), Box::new(|_| {
                 let collector = collector_thread.new_collector();
                 let probe = probe_module.probe(collector);
 
@@ -133,7 +132,7 @@ mod test {
                 Ok(())
             }));
 
-            let out = scheduler.run(&mut (&collector_thread, &probe_runner));
+            let out = scheduler.run(&mut ());
             assert_eq!(out, Ok(vec![Ok(())]));
 
             let mut msg = Vec::new();
