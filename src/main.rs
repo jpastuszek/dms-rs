@@ -120,23 +120,21 @@ mod test {
             let probe_runner = ProbeRunner::new(10);
             let probe_module = MockProbeModule {test: 0};
 
-            {
-                let mut scheduler: Scheduler<(&CollectorThread, &ProbeRunner), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
+            let mut scheduler: Scheduler<(&CollectorThread, &ProbeRunner), (), (), _> = Scheduler::new(Duration::milliseconds(500), FakeTimeSource::new());
 
-                scheduler.after(Duration::milliseconds(1000), Box::new(move |state| {
-                    let &mut (ref collector_thread, ref probe_runner) = state;
+            scheduler.after(Duration::milliseconds(1000), Box::new(|state| {
+                let &mut (ref collector_thread, ref probe_runner) = state;
 
-                    let collector = collector_thread.new_collector();
-                    let probe = probe_module.probe(collector);
+                let collector = collector_thread.new_collector();
+                let probe = probe_module.probe(collector);
 
-                    probe_runner.run(probe, MockProbeModule::run_mode());
+                probe_runner.run(probe, MockProbeModule::run_mode());
 
-                    Ok(())
-                }));
+                Ok(())
+            }));
 
-                let out = scheduler.run(&mut (&collector_thread, &probe_runner));
-                assert_eq!(out, Ok(vec![Ok(())]));
-            }
+            let out = scheduler.run(&mut (&collector_thread, &probe_runner));
+            assert_eq!(out, Ok(vec![Ok(())]));
 
             let mut msg = Vec::new();
             pull.read_to_end(&mut msg).unwrap();

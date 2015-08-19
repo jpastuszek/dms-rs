@@ -6,28 +6,28 @@ use std::cmp::Ordering;
 #[cfg(not(test))]
 use std::thread::sleep_ms;
 
-pub type Action<S, O, E> = Box<Fn(&mut S) -> Result<O, E>>;
+pub type Action<'a, S, O, E> = Box<Fn(&mut S) -> Result<O, E> + 'a>;
 
 enum TaskBond {
     OneOff,
     Perpetual
 }
 
-struct Task<S, O, E> {
+struct Task<'a, S, O, E> {
     interval: Duration,
     run_offset: DateTime<UTC>,
-    task: Action<S, O, E>,
+    task: Action<'a, S, O, E>,
     bond: TaskBond
 }
 
-impl<S, O, E> fmt::Debug for Task<S, O, E> {
+impl<'a, S, O, E> fmt::Debug for Task<'a, S, O, E> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Task({} +{})", self.run_offset, self.interval.num_milliseconds())
     }
 }
 
-impl<S, O, E> Task<S, O, E> {
-    fn new(interval: Duration, run_offset: DateTime<UTC>, bond: TaskBond, task: Action<S, O, E>) -> Task<S, O, E> {
+impl<'a, S, O, E> Task<'a, S, O, E> {
+    fn new(interval: Duration, run_offset: DateTime<UTC>, bond: TaskBond, task: Action<'a, S, O, E>) -> Task<'a, S, O, E> {
         assert!(interval > Duration::seconds(0)); // negative interval would make schedule go back in time!
         Task {
             interval: interval,
@@ -90,15 +90,15 @@ pub enum RunAction {
     Run(RunGroup)
 }
 
-pub struct Scheduler<S, O, E, T> where T: TimeSource {
+pub struct Scheduler<'a, S, O, E, T> where T: TimeSource {
     offset: DateTime<UTC>,
     group_interval: Duration,
-    tasks: BTreeMap<RunGroup, Vec<Task<S, O, E>>>,
+    tasks: BTreeMap<RunGroup, Vec<Task<'a, S, O, E>>>,
     time_source: T
 }
 
-impl<S, O, E, T> Scheduler<S, O, E, T> where T: TimeSource {
-    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<S, O, E, T>
+impl<'a, S, O, E, T> Scheduler<'a, S, O, E, T> where T: TimeSource {
+    pub fn new(group_interval: Duration, time_source: T) -> Scheduler<'a, S, O, E, T>
         where T: TimeSource {
         Scheduler {
             offset: time_source.now(),
@@ -108,7 +108,7 @@ impl<S, O, E, T> Scheduler<S, O, E, T> where T: TimeSource {
         }
     }
 
-    fn schedule(&mut self, mut task: Task<S, O, E>) {
+    fn schedule(&mut self, mut task: Task<'a, S, O, E>) {
         let now = self.time_source.now();
         let current_schedule = self.to_run_group(now - self.offset);
 
@@ -124,11 +124,11 @@ impl<S, O, E, T> Scheduler<S, O, E, T> where T: TimeSource {
         //println!("{:?}", self.tasks);
     }
 
-    pub fn after(&mut self, duration: Duration, action: Action<S, O, E>) {
+    pub fn after(&mut self, duration: Duration, action: Action<'a, S, O, E>) {
         self.schedule(Task::new(duration, UTC::now(), TaskBond::OneOff, action));
     }
 
-    pub fn every(&mut self, duration: Duration, action: Action<S, O, E>) {
+    pub fn every(&mut self, duration: Duration, action: Action<'a, S, O, E>) {
         self.schedule(Task::new(duration, UTC::now(), TaskBond::Perpetual, action));
     }
 
