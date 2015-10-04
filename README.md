@@ -1,4 +1,7 @@
-# dms-test
+# dms-rs
+
+This is my attempt on rewriting my distributed monitoring system prototype from Ruby into Rust.
+I think Rust will be much better language to implement this systems monitoring component.
 
 To build you need installed:
 * rust v1.1
