@@ -16,4 +16,5 @@ chrono = "*"
 capnp = "*"
 capnpc = "*"
 asynchronous = "~0.4"
+token_scheduler = { path = "../token_scheduler" }
 
