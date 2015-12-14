@@ -1,5 +1,6 @@
 use collector::Collector;
 use asynchronous::{Deferred, ControlFlow};
+/*
 
 #[allow(dead_code)]
 pub enum ProbeRunMode {
@@ -12,7 +13,7 @@ pub trait ProbeModule {
     type P: Probe;
 
     fn run_mode() -> ProbeRunMode;
-    fn probe(&self, collector: Collector) -> Self::P;
+    fn probe(&self, collector: Collector) -> Box<Self::P>;
 }
 
 pub trait Probe: Send {
@@ -35,10 +36,10 @@ impl ProbeRunner {
         }
     }
 
-    pub fn push<P>(&mut self, mut probe: P, probe_run_mode: ProbeRunMode) where P: Probe + 'static {
+    pub fn push<P>(&mut self, probe: Box<Probe>, probe_run_mode: ProbeRunMode) {
         match probe_run_mode {
             ProbeRunMode::Inline => {
-                self.inline.push(Box::new(probe));
+                self.inline.push(probe);
             },
             ProbeRunMode::Thread => {
                 self.threaded.push(Deferred::new(move || {
@@ -68,4 +69,4 @@ impl ProbeRunner {
     }
 }
 
-
+*/
