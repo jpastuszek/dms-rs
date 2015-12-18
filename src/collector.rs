@@ -43,7 +43,7 @@ impl CollectorThread {
         }
     }
 
-    pub fn new_collector(& self) -> Collector {
+    pub fn new_collector(&self) -> Collector {
         Collector {
             timestamp: UTC::now(),
             sink: self.sink.clone(),

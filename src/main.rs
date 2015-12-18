@@ -6,11 +6,13 @@ use clap::{Arg, App};
 extern crate env_logger;
 extern crate nanomsg;
 extern crate chrono;
+extern crate time;
 
 extern crate capnp;
 extern crate capnpc;
 
 extern crate asynchronous;
+extern crate token_scheduler;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
@@ -20,7 +22,6 @@ mod raw_data_point_capnp {
 
 mod messaging;
 mod collector;
-mod scheduler;
 mod probe;
 
 #[cfg(not(test))]
