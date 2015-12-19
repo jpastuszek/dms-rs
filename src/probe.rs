@@ -1,6 +1,5 @@
 use collector::Collect;
-use messaging::DataValue;
-use asynchronous::{Deferred, ControlFlow};
+//use asynchronous::{Deferred, ControlFlow};
 use time::Duration;
 
 #[allow(dead_code)]
@@ -27,17 +26,17 @@ pub trait Module<C> where C: Collect {
 }
 
 pub trait Probe<C>: Send where C: Collect {
-    fn run(&self, collector: C) -> Result<(), String>;
+    fn run(&self, collector: &mut C) -> Result<(), String>;
     fn run_mode(&self) -> ProbeRunMode;
 }
 
 pub struct ProbeRun(ModuleId, ProbeId);
 
-pub struct SharedThreadProbeExecutor<'a, C> where C: Collect + Clone {
+pub struct SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
     probes: Vec<&'a Probe<C>>
 }
 
-impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + Clone {
+impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
     pub fn new() -> SharedThreadProbeExecutor<'a, C> {
         SharedThreadProbeExecutor {
             probes: Vec::new()
@@ -48,8 +47,8 @@ impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + Clone {
         self.probes.push(probe);
     }
 
-    pub fn run(self, collector: &C) -> Vec<Result<(), String>> {
-        self.probes.into_iter().map(|probe| probe.run(collector.clone())).collect()
+    pub fn run(self, collector: &mut C) -> Vec<Result<(), String>> {
+        self.probes.into_iter().map(|probe| probe.run(collector)).collect()
     }
 }
 
@@ -68,19 +67,25 @@ mod test {
         probes: HashMap<ProbeId, StubProbe>
     }
 
-    struct StubProbe;
+    struct StubProbe {
+        num: i64
+    }
 
     impl StubProbe {
         //TODO: Self or StubProbe?
-        fn new() -> Self {
-            StubProbe
+        fn new(num: i64) -> Self {
+            StubProbe { num: num }
         }
     }
 
     impl<C> Probe<C> for StubProbe where C: Collect {
-        fn run(&self, collector: C) -> Result<(), String> {
+        fn run(&self, collector: &mut C) -> Result<(), String> {
+            let mut collector = collector;
+            collector.collect("foo", "bar", "baz", DataValue::Integer(self.num));
+            collector.collect("foo", "bar", "baz", DataValue::Integer(self.num + 1));
             Ok(())
         }
+
         fn run_mode(&self) -> ProbeRunMode {
             ProbeRunMode::SharedThread
         }
@@ -93,8 +98,8 @@ mod test {
                 probes: HashMap::new()
             };
             //TODO: ProbeId From<&str>
-            m.probes.insert(ProbeId("Probe1".to_string()), StubProbe::new());
-            m.probes.insert(ProbeId("Probe2".to_string()), StubProbe::new());
+            m.probes.insert(ProbeId("Probe1".to_string()), StubProbe::new(10));
+            m.probes.insert(ProbeId("Probe2".to_string()), StubProbe::new(20));
             m
         }
     }
@@ -122,12 +127,13 @@ mod test {
         }
     }
 
-    #[derive(Clone)]
-    struct StubCollector;
+    struct StubCollector {
+        pub values: Vec<DataValue>
+    }
 
     impl Collect for StubCollector {
-        fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
-            ()
+        fn collect(&mut self, _location: &str, _path: &str, _component: &str, value: DataValue) -> () {
+            self.values.push(value);
         }
     }
 
@@ -137,13 +143,15 @@ mod test {
         let m2 = StubModule::new(ModuleId("m2".to_string()));
 
         let mut exec = SharedThreadProbeExecutor::new();
-
-        let collector = StubCollector;
-
         exec.push(m1.probe(ProbeId("Probe1".to_string())).unwrap());
         exec.push(m2.probe(ProbeId("Probe1".to_string())).unwrap());
         exec.push(m2.probe(ProbeId("Probe2".to_string())).unwrap());
 
-        exec.run(&collector);
+        let mut collector = StubCollector { values: vec![] };
+        exec.run(&mut collector);
+
+        let collected_values: Vec<i64> = collector.values.into_iter().map(|v| if let DataValue::Integer(c) = v { c } else { 0 }).collect();
+
+        assert_eq!(collected_values, vec![10, 11, 10, 11, 20, 21]);
     }
 }
