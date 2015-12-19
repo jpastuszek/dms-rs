@@ -51,13 +51,17 @@ impl CollectorThread {
     }
 }
 
+pub trait Collect {
+    fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> ();
+}
+
 pub struct Collector {
     timestamp: DateTime<UTC>,
     sink: SyncSender<Box<RawDataPoint>>,
 }
 
-impl Collector {
-    pub fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
+impl Collect for Collector {
+    fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
         let raw_data_point = Box::new(RawDataPoint {
             location: location.to_string(),
             path: path.to_string(),

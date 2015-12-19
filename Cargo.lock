@@ -1,5 +1,5 @@
 [root]
-name = "rdms-test"
+name = "dms-rs"
 version = "0.0.1"
 dependencies = [
  "asynchronous 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",

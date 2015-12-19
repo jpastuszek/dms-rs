@@ -1,4 +1,5 @@
-use collector::{CollectorThread, Collector};
+use collector::Collect;
+use messaging::DataValue;
 use asynchronous::{Deferred, ControlFlow};
 use time::Duration;
 
@@ -19,37 +20,36 @@ pub struct ProbeSchedule {
     probe: ProbeId
 }
 
-pub trait Module {
+pub trait Module<C> where C: Collect {
     fn id(&self) -> ModuleId;
     fn schedule(&self) -> Vec<ProbeSchedule>;
-    fn probe(&self, probe: ProbeId) -> Option<&Probe>;
+    fn probe(&self, probe: ProbeId) -> Option<&Probe<C>>;
 }
 
-pub trait Probe: Send {
-    fn run(&self, collector: Collector) -> Result<(), String>;
+pub trait Probe<C>: Send where C: Collect {
+    fn run(&self, collector: C) -> Result<(), String>;
     fn run_mode(&self) -> ProbeRunMode;
 }
 
 pub struct ProbeRun(ModuleId, ProbeId);
 
-pub struct SharedThreadProbeExecutor<'a> {
-    probes: Vec<&'a Probe>
+pub struct SharedThreadProbeExecutor<'a, C> where C: Collect + Clone {
+    probes: Vec<&'a Probe<C>>
 }
 
-impl<'a> SharedThreadProbeExecutor<'a> {
-    pub fn new() -> SharedThreadProbeExecutor<'a> {
+impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + Clone {
+    pub fn new() -> SharedThreadProbeExecutor<'a, C> {
         SharedThreadProbeExecutor {
             probes: Vec::new()
         }
     }
 
-    pub fn push(&mut self, probe: &'a Probe) {
+    pub fn push(&mut self, probe: &'a Probe<C>) {
         self.probes.push(probe);
     }
 
-    pub fn run(self, collector_thread: &CollectorThread) -> Vec<Result<(), String>> {
-        //TODO: get collector and clone it?
-        self.probes.into_iter().map(|probe| probe.run(collector_thread.new_collector())).collect()
+    pub fn run(self, collector: &C) -> Vec<Result<(), String>> {
+        self.probes.into_iter().map(|probe| probe.run(collector.clone())).collect()
     }
 }
 
@@ -58,7 +58,8 @@ impl<'a> SharedThreadProbeExecutor<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use collector::{CollectorThread, Collector};
+    use collector::Collect;
+    use messaging::DataValue;
     use std::collections::HashMap;
     use time::Duration;
 
@@ -76,8 +77,8 @@ mod test {
         }
     }
 
-    impl Probe for StubProbe {
-        fn run(&self, collector: Collector) -> Result<(), String> {
+    impl<C> Probe<C> for StubProbe where C: Collect {
+        fn run(&self, collector: C) -> Result<(), String> {
             Ok(())
         }
         fn run_mode(&self) -> ProbeRunMode {
@@ -98,7 +99,7 @@ mod test {
         }
     }
 
-    impl Module for StubModule {
+    impl<C> Module<C> for StubModule where C: Collect {
         fn id(&self) -> ModuleId {
             self.id.clone()
         }
@@ -116,8 +117,17 @@ mod test {
             ]
         }
 
-        fn probe(&self, probe: ProbeId) -> Option<&Probe> {
-            self.probes.get(&probe).map(|p| p as &Probe)
+        fn probe(&self, probe: ProbeId) -> Option<&Probe<C>> {
+            self.probes.get(&probe).map(|p| p as &Probe<C>)
+        }
+    }
+
+    #[derive(Clone)]
+    struct StubCollector;
+
+    impl Collect for StubCollector {
+        fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
+            ()
         }
     }
 
@@ -128,13 +138,12 @@ mod test {
 
         let mut exec = SharedThreadProbeExecutor::new();
 
-        //TODO: make generic
-        let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
+        let collector = StubCollector;
 
         exec.push(m1.probe(ProbeId("Probe1".to_string())).unwrap());
         exec.push(m2.probe(ProbeId("Probe1".to_string())).unwrap());
         exec.push(m2.probe(ProbeId("Probe2".to_string())).unwrap());
 
-        exec.run(&collector_thread);
+        exec.run(&collector);
     }
 }
