@@ -1,5 +1,5 @@
 [package]
-name = "rdms-test"
+name = "dms-rs"
 version = "0.0.1"
 authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
 build = "build.rs"
