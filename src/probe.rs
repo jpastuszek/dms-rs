@@ -11,6 +11,7 @@ pub enum ProbeRunMode {
     //DedicatedProcess
 }
 
+//TODO: ProbeId From<&str>
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct ModuleId(String);
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -55,7 +56,7 @@ impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
 #[derive(Clone)]
 pub struct ProbeRun(ModuleId, ProbeId);
 
-pub struct ProbeScheduler<'m, C> where C: Collect {
+pub struct ProbeScheduler<'m, C> where C: Collect + 'm {
     scheduler: Scheduler<ProbeRun, SteadyTimeSource>,
     modules: HashMap<ModuleId, &'m Module<C>>
 }
@@ -109,21 +110,22 @@ mod test {
     }
 
     struct StubProbe {
-        num: i64
+        name: String
     }
 
     impl StubProbe {
-        //TODO: Self or StubProbe?
-        fn new(num: i64) -> Self {
-            StubProbe { num: num }
+        fn new(name: String) -> Self {
+            StubProbe {
+                name: name
+            }
         }
     }
 
     impl<C> Probe<C> for StubProbe where C: Collect {
         fn run(&self, collector: &mut C) -> Result<(), String> {
             let mut collector = collector;
-            collector.collect("foo", "bar", "baz", DataValue::Integer(self.num));
-            collector.collect("foo", "bar", "baz", DataValue::Integer(self.num + 1));
+            collector.collect("foo", &self.name, "c1", DataValue::Text(format!("{}-{}", self.name, "c1")));
+            collector.collect("bar", &self.name, "c2", DataValue::Text(format!("{}-{}", self.name, "c2")));
             Ok(())
         }
 
@@ -134,14 +136,14 @@ mod test {
 
     impl StubModule {
         fn new(id: ModuleId) -> StubModule {
-            let mut m = StubModule {
+            let mut probes = HashMap::new();
+            probes.insert(ProbeId("p1".to_string()), StubProbe::new(format!("{}-p1", id.0)));
+            probes.insert(ProbeId("p2".to_string()), StubProbe::new(format!("{}-p2", id.0)));
+
+            StubModule {
                 id: id,
-                probes: HashMap::new()
-            };
-            //TODO: ProbeId From<&str>
-            m.probes.insert(ProbeId("Probe1".to_string()), StubProbe::new(10));
-            m.probes.insert(ProbeId("Probe2".to_string()), StubProbe::new(20));
-            m
+                probes: probes
+            }
         }
     }
 
@@ -154,11 +156,11 @@ mod test {
             vec![
                 ProbeSchedule {
                     every: Duration::seconds(1),
-                    probe: ProbeId("Probe1".to_string())
+                    probe: ProbeId("p1".to_string())
                 },
                 ProbeSchedule {
                     every: Duration::seconds(4),
-                    probe: ProbeId("Probe2".to_string())
+                    probe: ProbeId("p2".to_string())
                 }
             ]
         }
@@ -178,22 +180,30 @@ mod test {
         }
     }
 
+    impl StubCollector {
+        fn text_values(self) -> Vec<String> {
+            self.values.into_iter().map(|v| if let DataValue::Text(c) = v { c } else { "none".to_string() }).collect()
+        }
+    }
+
     #[test]
     fn shared_thread_probe_executor() {
         let m1 = StubModule::new(ModuleId("m1".to_string()));
         let m2 = StubModule::new(ModuleId("m2".to_string()));
 
         let mut exec = SharedThreadProbeExecutor::new();
-        exec.push(m1.probe(&ProbeId("Probe1".to_string())).unwrap());
-        exec.push(m2.probe(&ProbeId("Probe1".to_string())).unwrap());
-        exec.push(m2.probe(&ProbeId("Probe2".to_string())).unwrap());
+        exec.push(m1.probe(&ProbeId("p1".to_string())).unwrap());
+        exec.push(m2.probe(&ProbeId("p1".to_string())).unwrap());
+        exec.push(m2.probe(&ProbeId("p2".to_string())).unwrap());
 
         let mut collector = StubCollector { values: Vec::new() };
         exec.run(&mut collector);
 
-        let collected_values: Vec<i64> = collector.values.into_iter().map(|v| if let DataValue::Integer(c) = v { c } else { 0 }).collect();
-
-        assert_eq!(collected_values, vec![10, 11, 10, 11, 20, 21]);
+        assert_eq!(collector.text_values(), vec![
+           "m1-p1-c1", "m1-p1-c2",
+           "m2-p1-c1", "m2-p1-c2",
+           "m2-p2-c1", "m2-p2-c2"
+        ]);
     }
 
     #[test]
@@ -211,11 +221,12 @@ mod test {
         let mut collector = StubCollector { values: Vec::new() };
         let probes = result.unwrap();
         for probe in probes {
-            probe.run(&mut collector);
+            probe.run(&mut collector).unwrap();
         }
 
-        let collected_values: Vec<i64> = collector.values.into_iter().map(|v| if let DataValue::Integer(c) = v { c } else { 0 }).collect();
-
-        assert_eq!(collected_values, vec![10, 11, 10, 11]);
+        assert_eq!(collector.text_values(), vec![
+           "m1-p1-c1", "m1-p1-c2",
+           "m2-p1-c1", "m2-p1-c2"
+        ]);
     }
 }
