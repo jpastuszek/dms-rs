@@ -1,7 +1,7 @@
 use collector::Collect;
 //use asynchronous::{Deferred, ControlFlow};
 use time::Duration;
-use token_scheduler::{Scheduler, SteadyTimeSource};
+use token_scheduler::{Scheduler, SteadyTimeSource, WaitError};
 use std::collections::HashMap;
 
 #[allow(dead_code)]
@@ -54,7 +54,7 @@ impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct ProbeRun(ModuleId, ProbeId);
 
 pub struct ProbeScheduler<'m, C> where C: Collect + 'm {
@@ -82,25 +82,23 @@ impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
         self.modules.insert(module.id(), module);
     }
 
-    //TODO: proper error enum
-    //TODO: log missed schedules
+    //TODO: log and count missed
+    //TODO: re-run when all probse were canceled
     //TODO: add stats for missed/not found schedules
-    //TODO: cancel schedules that are not found
-    //TODO: add Display for Module/ProbeID
-    pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, String> {
+    pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, WaitError<ProbeRun>> {
         self.scheduler.wait()
-        .ok_or("no probes scheduled to run!".to_string())
         .map(|probe_runs|
             probe_runs.into_iter()
-            .filter_map(|ProbeRun(ref module_id, ref probe_id)|
+            .filter_map(|ref probe_run| {
+                let &ProbeRun(ref module_id, ref probe_id) = probe_run;
                 self.modules.get(module_id).expect(&format!("no module of ID {:?} found", module_id))
                 .probe(probe_id).or_else(|| {
                     self.gone = self.gone + 1;
                     //TODO: log: format!("no probe of ID {:?} found in module of ID {:?}", probe_id, module.id()))
-                    //TODO: cancel schedule
+                    self.scheduler.cancel(probe_run);
                     None
                 })
-            ).collect()
+            }).collect()
         )
     }
 
@@ -273,7 +271,11 @@ mod test {
         {
             let result = ps.wait();
             assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
         }
         assert_eq!(ps.gone(), 1);
+
+        let result = ps.wait();
+        assert!(result.is_err());
     }
 }
