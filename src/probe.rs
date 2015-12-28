@@ -59,14 +59,18 @@ pub struct ProbeRun(ModuleId, ProbeId);
 
 pub struct ProbeScheduler<'m, C> where C: Collect + 'm {
     scheduler: Scheduler<ProbeRun, SteadyTimeSource>,
-    modules: HashMap<ModuleId, &'m Module<C>>
+    modules: HashMap<ModuleId, &'m Module<C>>,
+    missed: u32,
+    gone: u32
 }
 
 impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
     pub fn new() -> ProbeScheduler<'m, C> {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
-            modules: HashMap::new()
+            modules: HashMap::new(),
+            missed: 0,
+            gone: 0
         }
     }
 
@@ -80,20 +84,32 @@ impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
 
     //TODO: proper error enum
     //TODO: log missed schedules
+    //TODO: add stats for missed/not found schedules
+    //TODO: cancel schedules that are not found
     //TODO: add Display for Module/ProbeID
     pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, String> {
         self.scheduler.wait()
         .ok_or("no probes scheduled to run!".to_string())
-        .and_then(|probe_runs|
-            probe_runs.into_iter().map(|ProbeRun(ref module_id, ref probe_id)|
-                self.modules.get(module_id)
-                .ok_or(format!("no module of ID {:?} found", module_id))
-                .and_then(|&module|
-                    module.probe(probe_id)
-                    .ok_or(format!("no probe of ID {:?} found in module of ID {:?}", probe_id, module.id()))
-                )
+        .map(|probe_runs|
+            probe_runs.into_iter()
+            .filter_map(|ProbeRun(ref module_id, ref probe_id)|
+                self.modules.get(module_id).expect(&format!("no module of ID {:?} found", module_id))
+                .probe(probe_id).or_else(|| {
+                    self.gone = self.gone + 1;
+                    //TODO: log: format!("no probe of ID {:?} found in module of ID {:?}", probe_id, module.id()))
+                    //TODO: cancel schedule
+                    None
+                })
             ).collect()
         )
+    }
+
+    pub fn missed(&self) -> u32 {
+        self.missed
+    }
+
+    pub fn gone(&self) -> u32 {
+        self.gone
     }
 }
 
@@ -253,8 +269,11 @@ mod test {
         let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
         ps.push(&m1);
 
-        let result = ps.wait();
-        assert!(result.is_err());
-        assert_eq!(result.err().unwrap(), "no probe of ID ProbeId(\"p1\") found in module of ID ModuleId(\"m1\")");
+        assert_eq!(ps.gone(), 0);
+        {
+            let result = ps.wait();
+            assert!(result.is_ok());
+        }
+        assert_eq!(ps.gone(), 1);
     }
 }
