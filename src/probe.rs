@@ -1,5 +1,7 @@
 use collector::Collect;
 //use asynchronous::{Deferred, ControlFlow};
+use std::fmt;
+use std::error::Error;
 use time::Duration;
 use token_scheduler::{Scheduler, SteadyTimeSource, WaitError};
 use std::collections::HashMap;
@@ -60,8 +62,26 @@ pub struct ProbeRun(ModuleId, ProbeId);
 pub struct ProbeScheduler<'m, C> where C: Collect + 'm {
     scheduler: Scheduler<ProbeRun, SteadyTimeSource>,
     modules: HashMap<ModuleId, &'m Module<C>>,
-    missed: u32,
-    gone: u32
+    missed: usize
+}
+
+#[derive(Debug)]
+enum ProbeSchedulerError {
+    Empty
+}
+
+impl fmt::Display for ProbeSchedulerError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &ProbeSchedulerError::Empty => write!(f, "scheduler is empty"),
+        }
+    }
+}
+
+impl Error for ProbeSchedulerError {
+    fn description(&self) -> &str {
+        "probe schedule error"
+    }
 }
 
 impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
@@ -69,8 +89,7 @@ impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
             modules: HashMap::new(),
-            missed: 0,
-            gone: 0
+            missed: 0
         }
     }
 
@@ -82,32 +101,29 @@ impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
         self.modules.insert(module.id(), module);
     }
 
-    //TODO: log and count missed
-    //TODO: re-run when all probse were canceled
-    //TODO: add stats for missed/not found schedules
-    pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, WaitError<ProbeRun>> {
-        self.scheduler.wait()
-        .map(|probe_runs|
-            probe_runs.into_iter()
-            .filter_map(|ref probe_run| {
-                let &ProbeRun(ref module_id, ref probe_id) = probe_run;
-                self.modules.get(module_id).expect(&format!("no module of ID {:?} found", module_id))
-                .probe(probe_id).or_else(|| {
-                    self.gone = self.gone + 1;
-                    //TODO: log: format!("no probe of ID {:?} found in module of ID {:?}", probe_id, module.id()))
-                    self.scheduler.cancel(probe_run);
-                    None
-                })
-            }).collect()
-        )
+    pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, ProbeSchedulerError> {
+         match self.scheduler.wait() {
+             Err(WaitError::Empty) => Err(ProbeSchedulerError::Empty),
+             Err(WaitError::Missed(probe_runs)) => {
+                 //TODO: log missed
+                 self.missed = self.missed + probe_runs.len();
+                 self.wait()
+             },
+             Ok(probe_runs) => {
+                 Ok(
+                     probe_runs.into_iter()
+                     .map(|ProbeRun(ref module_id, ref probe_id)|
+                          self
+                          .modules.get(module_id).expect(&format!("no module of ID {:?} found", module_id))
+                          .probe(probe_id).expect(&format!("no probe {:?} found in module {:?}", probe_id, module_id))
+                     ).collect()
+                 )
+             }
+         }
     }
 
-    pub fn missed(&self) -> u32 {
+    pub fn missed(&self) -> usize {
         self.missed
-    }
-
-    pub fn gone(&self) -> u32 {
-        self.gone
     }
 }
 
@@ -260,22 +276,55 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_wait_should_handle_missing_probe() {
+    #[should_panic(expected = "no probe ProbeId(\"p1\") found in module ModuleId(\"m1\")")]
+    fn probe_scheduler_wait_should_panic_on_missing_probe() {
         let mut m1 = StubModule::new(ModuleId("m1".to_string()));
         m1.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
 
         let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
         ps.push(&m1);
 
-        assert_eq!(ps.gone(), 0);
+        let _ = ps.wait();
+    }
+
+    #[test]
+    fn probe_scheduler_wait_should_count_missed_schedules() {
+        use std::thread::sleep_ms;
+
+        let mut m1 = StubModule::new(ModuleId("m1".to_string()));
+        m1.add_probe(ProbeId("p1".to_string()), StubProbe::new("m1-p1"));
+        m1.add_probe(ProbeId("p2".to_string()), StubProbe::new("m1-p2"));
+        m1.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
+        m1.add_schedule(Duration::milliseconds(100), ProbeId("p2".to_string()));
+
+        let mut m2 = StubModule::new(ModuleId("m2".to_string()));
+        m2.add_probe(ProbeId("p1".to_string()), StubProbe::new("m2-p1"));
+        m2.add_probe(ProbeId("p2".to_string()), StubProbe::new("m2-p2"));
+        m2.add_schedule(Duration::milliseconds(200), ProbeId("p1".to_string()));
+
+        let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
+        ps.push(&m1);
+        ps.push(&m2);
+
+        sleep_ms(200);
+
         {
             let result = ps.wait();
             assert!(result.is_ok());
-            assert!(result.unwrap().is_empty());
-        }
-        assert_eq!(ps.gone(), 1);
 
-        let result = ps.wait();
-        assert!(result.is_err());
+            let mut collector = StubCollector { values: Vec::new() };
+            let probes = result.unwrap();
+            for probe in probes {
+                probe.run(&mut collector).unwrap();
+            }
+
+            assert_eq!(collector.text_values(), vec![
+               "m2-p1-c1", "m2-p1-c2",
+               "m1-p1-c1", "m1-p1-c2",
+               "m1-p2-c1", "m1-p2-c2"
+            ]);
+        }
+
+        assert_eq!(ps.missed(), 2);
     }
 }
