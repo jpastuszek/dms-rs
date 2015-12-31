@@ -1,10 +1,10 @@
 use collector::Collect;
 //use asynchronous::{Deferred, ControlFlow};
+use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
 use time::Duration;
 use token_scheduler::{Scheduler, SteadyTimeSource, WaitError};
-use std::collections::HashMap;
 
 #[allow(dead_code)]
 pub enum ProbeRunMode {
@@ -19,35 +19,43 @@ pub struct ModuleId(String);
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct ProbeId(String);
 
-#[derive(Clone)]
-pub struct ProbeSchedule {
+pub struct ProbeSchedule<C> where C: Collect {
     every: Duration,
-    probe: ProbeId
+    probe: Rc<Probe<C>>
 }
 
-pub trait Module<C> where C: Collect {
-    fn id(&self) -> ModuleId;
-    fn schedule(&self) -> Vec<ProbeSchedule>;
-    fn probe(&self, probe: &ProbeId) -> Option<&Probe<C>>;
+impl<C> Clone for ProbeSchedule<C> where C: Collect {
+    fn clone(&self) -> ProbeSchedule<C> {
+        ProbeSchedule {
+            every: self.every.clone(),
+            probe: self.probe.clone()
+        }
+    }
 }
 
 pub trait Probe<C>: Send where C: Collect {
+    fn name(&self) -> &str;
     fn run(&self, collector: &mut C) -> Result<(), String>;
     fn run_mode(&self) -> ProbeRunMode;
 }
 
-pub struct SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
-    probes: Vec<&'a Probe<C>>
+pub trait Module<C> where C: Collect {
+    fn name(&self) -> &str;
+    fn schedule(&self) -> Vec<ProbeSchedule<C>>;
 }
 
-impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
-    pub fn new() -> SharedThreadProbeExecutor<'a, C> {
+pub struct SharedThreadProbeExecutor<C> where C: Collect {
+    probes: Vec<Rc<Probe<C>>>
+}
+
+impl<C> SharedThreadProbeExecutor<C> where C: Collect {
+    pub fn new() -> SharedThreadProbeExecutor<C> {
         SharedThreadProbeExecutor {
             probes: Vec::new()
         }
     }
 
-    pub fn push(&mut self, probe: &'a Probe<C>) {
+    pub fn push(&mut self, probe: Rc<Probe<C>>) {
         self.probes.push(probe);
     }
 
@@ -56,12 +64,8 @@ impl<'a, C> SharedThreadProbeExecutor<'a, C> where C: Collect + 'a {
     }
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub struct ProbeRun(ModuleId, ProbeId);
-
-pub struct ProbeScheduler<'m, C> where C: Collect + 'm {
-    scheduler: Scheduler<ProbeRun, SteadyTimeSource>,
-    modules: HashMap<ModuleId, &'m Module<C>>,
+pub struct ProbeScheduler<C> where C: Collect + {
+    scheduler: Scheduler<Rc<Probe<C>>, SteadyTimeSource>,
     missed: usize
 }
 
@@ -84,24 +88,21 @@ impl Error for ProbeSchedulerError {
     }
 }
 
-impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
-    pub fn new() -> ProbeScheduler<'m, C> {
+impl<C> ProbeScheduler<C> where C: Collect {
+    pub fn new() -> ProbeScheduler<C> {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
-            modules: HashMap::new(),
             missed: 0
         }
     }
 
-    pub fn push(&mut self, module: &'m Module<C>) {
+    pub fn schedule<'m>(&mut self, module: &'m Module<C>) {
         for probe_schedule in module.schedule() {
-            self.scheduler.every(probe_schedule.every, ProbeRun(module.id(), probe_schedule.probe));
+            self.scheduler.every(probe_schedule.every, probe_schedule.probe);
         }
-
-        self.modules.insert(module.id(), module);
     }
 
-    pub fn wait(&mut self) -> Result<Vec<&Probe<C>>, ProbeSchedulerError> {
+    pub fn wait(&mut self) -> Result<Vec<Rc<Probe<C>>>, ProbeSchedulerError> {
          match self.scheduler.wait() {
              Err(WaitError::Empty) => Err(ProbeSchedulerError::Empty),
              Err(WaitError::Missed(probe_runs)) => {
@@ -109,15 +110,8 @@ impl<'m, C> ProbeScheduler<'m, C> where C: Collect {
                  self.missed = self.missed + probe_runs.len();
                  self.wait()
              },
-             Ok(probe_runs) => {
-                 Ok(
-                     probe_runs.into_iter()
-                     .map(|ProbeRun(ref module_id, ref probe_id)|
-                          self
-                          .modules.get(module_id).expect(&format!("no module of ID {:?} found", module_id))
-                          .probe(probe_id).expect(&format!("no probe {:?} found in module {:?}", probe_id, module_id))
-                     ).collect()
-                 )
+             Ok(probes) => {
+                 Ok(probes)
              }
          }
     }
@@ -132,13 +126,12 @@ mod test {
     use super::*;
     use collector::Collect;
     use messaging::DataValue;
-    use std::collections::HashMap;
     use time::Duration;
+    use std::rc::Rc;
 
-    struct StubModule {
-        id: ModuleId,
-        probes: HashMap<ProbeId, StubProbe>,
-        schedule: Vec<ProbeSchedule>
+    struct StubModule<C> where C: Collect {
+        name: String,
+        schedule: Vec<ProbeSchedule<C>>
     }
 
     struct StubProbe {
@@ -146,14 +139,20 @@ mod test {
     }
 
     impl StubProbe {
-        fn new(name: &str) -> Self {
-            StubProbe {
-                name: name.to_string()
-            }
+        fn new(name: &str) -> Rc<Self> {
+            Rc::new(
+                StubProbe {
+                    name: name.to_string()
+                }
+            )
         }
     }
 
     impl<C> Probe<C> for StubProbe where C: Collect {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
         fn run(&self, collector: &mut C) -> Result<(), String> {
             let mut collector = collector;
             collector.collect("foo", &self.name, "c1", DataValue::Text(format!("{}-{}", self.name, "c1")));
@@ -166,20 +165,15 @@ mod test {
         }
     }
 
-    impl StubModule {
-        fn new(id: ModuleId) -> StubModule {
+    impl<C> StubModule<C> where C: Collect  {
+        fn new(name: &str) -> StubModule<C> {
             StubModule {
-                id: id,
-                probes: HashMap::new(),
+                name: name.to_string(),
                 schedule: Vec::new()
             }
         }
 
-        fn add_probe(&mut self, id: ProbeId, probe: StubProbe) {
-            self.probes.insert(id, probe);
-        }
-
-        fn add_schedule(&mut self, every: Duration, probe: ProbeId) {
+        fn add_schedule(&mut self, every: Duration, probe: Rc<Probe<C>>) {
             self.schedule.push(
                 ProbeSchedule {
                     every: every,
@@ -189,17 +183,13 @@ mod test {
         }
     }
 
-    impl<C> Module<C> for StubModule where C: Collect {
-        fn id(&self) -> ModuleId {
-            self.id.clone()
+    impl<C> Module<C> for StubModule<C> where C: Collect {
+        fn name(&self) -> &str {
+            &self.name
         }
 
-        fn schedule(&self) -> Vec<ProbeSchedule> {
+        fn schedule(&self) -> Vec<ProbeSchedule<C>> {
             self.schedule.clone()
-        }
-
-        fn probe(&self, probe: &ProbeId) -> Option<&Probe<C>> {
-            self.probes.get(probe).map(|p| p as &Probe<C>)
         }
     }
 
@@ -221,44 +211,38 @@ mod test {
 
     #[test]
     fn shared_thread_probe_executor() {
-        let mut m1 = StubModule::new(ModuleId("m1".to_string()));
-        m1.add_probe(ProbeId("p1".to_string()), StubProbe::new("m1-p1"));
-        m1.add_probe(ProbeId("p2".to_string()), StubProbe::new("m1-p2"));
-
-        let mut m2 = StubModule::new(ModuleId("m2".to_string()));
-        m2.add_probe(ProbeId("p1".to_string()), StubProbe::new("m2-p1"));
-        m2.add_probe(ProbeId("p2".to_string()), StubProbe::new("m2-p2"));
+        let p1 = StubProbe::new("p1");
+        let p2 = StubProbe::new("p2");
+        let p3 = StubProbe::new("p3");
 
         let mut exec = SharedThreadProbeExecutor::new();
-        exec.push(m1.probe(&ProbeId("p1".to_string())).unwrap());
-        exec.push(m2.probe(&ProbeId("p1".to_string())).unwrap());
-        exec.push(m2.probe(&ProbeId("p2".to_string())).unwrap());
+        exec.push(p1);
+        exec.push(p2);
+        exec.push(p3);
 
         let mut collector = StubCollector { values: Vec::new() };
         exec.run(&mut collector);
 
         assert_eq!(collector.text_values(), vec![
-           "m1-p1-c1", "m1-p1-c2",
-           "m2-p1-c1", "m2-p1-c2",
-           "m2-p2-c1", "m2-p2-c2"
+           "p1-c1", "p1-c2",
+           "p2-c1", "p2-c2",
+           "p3-c1", "p3-c2"
         ]);
     }
 
     #[test]
     fn probe_scheduler_wait_should_provide_porbes_according_to_schedule() {
-        let mut m1 = StubModule::new(ModuleId("m1".to_string()));
-        m1.add_probe(ProbeId("p1".to_string()), StubProbe::new("m1-p1"));
-        m1.add_probe(ProbeId("p2".to_string()), StubProbe::new("m1-p2"));
-        m1.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
+        let mut m1 = StubModule::new("m1");
+        m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p1"));
 
-        let mut m2 = StubModule::new(ModuleId("m2".to_string()));
-        m2.add_probe(ProbeId("p1".to_string()), StubProbe::new("m2-p1"));
-        m2.add_probe(ProbeId("p2".to_string()), StubProbe::new("m2-p2"));
-        m2.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
+        let mut m2 = StubModule::new("m2");
+        m2.add_schedule(Duration::milliseconds(100), StubProbe::new("m2-p1"));
+        m2.add_schedule(Duration::milliseconds(200), StubProbe::new("m2-p2"));
+
 
         let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
-        ps.push(&m1);
-        ps.push(&m2);
+        ps.schedule(&m1);
+        ps.schedule(&m2);
 
         let result = ps.wait();
         assert!(result.is_ok());
@@ -276,35 +260,19 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "no probe ProbeId(\"p1\") found in module ModuleId(\"m1\")")]
-    fn probe_scheduler_wait_should_panic_on_missing_probe() {
-        let mut m1 = StubModule::new(ModuleId("m1".to_string()));
-        m1.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
-
-        let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
-        ps.push(&m1);
-
-        let _ = ps.wait();
-    }
-
-    #[test]
     fn probe_scheduler_wait_should_count_missed_schedules() {
         use std::thread::sleep_ms;
 
-        let mut m1 = StubModule::new(ModuleId("m1".to_string()));
-        m1.add_probe(ProbeId("p1".to_string()), StubProbe::new("m1-p1"));
-        m1.add_probe(ProbeId("p2".to_string()), StubProbe::new("m1-p2"));
-        m1.add_schedule(Duration::milliseconds(100), ProbeId("p1".to_string()));
-        m1.add_schedule(Duration::milliseconds(100), ProbeId("p2".to_string()));
+        let mut m1 = StubModule::new("m1");
+        m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p1"));
+        m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p2"));
 
-        let mut m2 = StubModule::new(ModuleId("m2".to_string()));
-        m2.add_probe(ProbeId("p1".to_string()), StubProbe::new("m2-p1"));
-        m2.add_probe(ProbeId("p2".to_string()), StubProbe::new("m2-p2"));
-        m2.add_schedule(Duration::milliseconds(200), ProbeId("p1".to_string()));
+        let mut m2 = StubModule::new("m2");
+        m2.add_schedule(Duration::milliseconds(200), StubProbe::new("m2-p1"));
 
         let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
-        ps.push(&m1);
-        ps.push(&m2);
+        ps.schedule(&m1);
+        ps.schedule(&m2);
 
         sleep_ms(200);
 
