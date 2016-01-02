@@ -70,19 +70,15 @@ pub struct ProbeScheduler<C> where C: Collect + {
 }
 
 #[derive(Debug)]
-enum ProbeSchedulerError {
-    Empty
-}
+struct EmptySchedulerError;
 
-impl fmt::Display for ProbeSchedulerError {
+impl fmt::Display for EmptySchedulerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &ProbeSchedulerError::Empty => write!(f, "scheduler is empty"),
-        }
+        write!(f, "scheduler is empty")
     }
 }
 
-impl Error for ProbeSchedulerError {
+impl Error for EmptySchedulerError {
     fn description(&self) -> &str {
         "probe schedule error"
     }
@@ -102,9 +98,9 @@ impl<C> ProbeScheduler<C> where C: Collect {
         }
     }
 
-    pub fn wait(&mut self) -> Result<Vec<Rc<Probe<C>>>, ProbeSchedulerError> {
+    pub fn wait(&mut self) -> Result<Vec<Rc<Probe<C>>>, EmptySchedulerError> {
          match self.scheduler.wait() {
-             Err(WaitError::Empty) => Err(ProbeSchedulerError::Empty),
+             Err(WaitError::Empty) => Err(EmptySchedulerError),
              Err(WaitError::Missed(probe_runs)) => {
                  //TODO: log missed
                  self.missed = self.missed + probe_runs.len();
