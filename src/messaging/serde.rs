@@ -216,7 +216,7 @@ impl FromStr for Encoding {
     }
 }
 
-pub trait SerDeMessage: Debug + Any {
+pub trait SerDeMessage: Debug + Any + Sized {
     fn to_bytes(&self, encoding: Encoding) -> Result<Vec<u8>, SerializationError<Self>>;
     fn data_type() -> DataType;
     fn version() -> u8 {
