@@ -13,12 +13,6 @@ pub enum ProbeRunMode {
     //DedicatedProcess
 }
 
-//TODO: ProbeId From<&str>
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct ModuleId(String);
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct ProbeId(String);
-
 pub struct ProbeSchedule<C> where C: Collect {
     every: Duration,
     probe: Rc<Probe<C>>
