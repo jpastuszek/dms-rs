@@ -22,7 +22,6 @@ mod raw_data_point_capnp {
 
 mod messaging;
 mod collector;
-mod probe;
 
 #[cfg(not(test))]
 fn main() {
