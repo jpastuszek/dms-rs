@@ -120,26 +120,21 @@ struct Timer {
     task_tx: Sender<(Timer, Sender<Timer>, Duration)>
 }
 
-//TODO: this self eating version is a bit complicated and slower than just exposing chanels
-// directly, but somehow safer to use since you need to recv() before you can send again
 impl Timer {
     fn start() -> Timer {
         let (task_tx, task_rx): (_, Receiver<(Timer, Sender<Timer>, Duration)>) = channel();
 
         spawn(move || {
             loop {
-                match task_rx.recv().map(|(timer, alarm_tx, duration)| {
-                        sleep(StdDuration::new(
-                            duration.num_seconds() as u64,
-                            (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
-                        ));
-                        alarm_tx.send(timer)
+                if let Err(error) = task_rx.recv().map(|(timer, alarm_tx, duration)| {
+                    sleep(StdDuration::new(
+                        duration.num_seconds() as u64,
+                        (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
+                    ));
+                    alarm_tx.send(timer)
                 }) {
-                    Ok(_) => (),
-                    Err(error) => {
-                        info!("Timer thread finished: {}", error);
-                        return ();
-                    }
+                    info!("Timer thread finished: {}", error);
+                    return ();
                 }
             }
         });
@@ -150,11 +145,8 @@ impl Timer {
     }
 
     fn alarm_in(self, duration: Duration) -> Result<Receiver<Timer>, SendError<(Timer, Sender<Timer>, Duration)>> {
-        let task_tx = self.task_tx.clone();
-        //TODO: Need to crate channel every time since I cannot clone alarm_rx as above; can I move
-        //it out?
         let (alarm_tx, alarm_rx) = channel();
-        task_tx.send((self, alarm_tx, duration)).map(|_| alarm_rx)
+        self.task_tx.clone().send((self, alarm_tx, duration)).map(|_| alarm_rx)
     }
 }
 
