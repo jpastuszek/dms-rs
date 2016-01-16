@@ -6,7 +6,7 @@ use std::fmt;
 use std::error::Error;
 use time::Duration;
 use std::time::Duration as StdDuration;
-use token_scheduler::{Scheduler, SteadyTimeSource, WaitError};
+use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Receiver, Sender, SendError};
 use std::thread::sleep;
@@ -65,7 +65,8 @@ impl<C> SharedThreadProbeExecutor<C> where C: Collect {
 
 pub struct ProbeScheduler<C> where C: Collect + {
     scheduler: Scheduler<Rc<Probe<C>>, SteadyTimeSource>,
-    missed: usize
+    missed: usize,
+    timer: Timer
 }
 
 #[derive(Debug)]
@@ -83,11 +84,17 @@ impl Error for EmptySchedulerError {
     }
 }
 
+pub enum Schedule<C> where C: Collect {
+    Wait(Receiver<()>),
+    Probes(Vec<Rc<Probe<C>>>)
+}
+
 impl<C> ProbeScheduler<C> where C: Collect {
     pub fn new() -> ProbeScheduler<C> {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
-            missed: 0
+            missed: 0,
+            timer: Timer::spawn()
         }
     }
 
@@ -97,17 +104,18 @@ impl<C> ProbeScheduler<C> where C: Collect {
         }
     }
 
-    pub fn wait(&mut self) -> Result<Vec<Rc<Probe<C>>>, EmptySchedulerError> {
-         match self.scheduler.wait() {
-             Err(WaitError::Empty) => Err(EmptySchedulerError),
-             Err(WaitError::Missed(probe_runs)) => {
+    pub fn next(&mut self) -> Result<Schedule<C>, EmptySchedulerError> {
+         match self.scheduler.next() {
+             Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration).expect("timer died"))),
+             Some(NextSchedule::Missed(probe_runs)) => {
                  //TODO: log missed
                  self.missed = self.missed + probe_runs.len();
-                 self.wait()
+                 self.next()
              },
-             Ok(probes) => {
-                 Ok(probes)
+             Some(NextSchedule::Current(probes)) => {
+                 Ok(Schedule::Probes(probes))
              }
+             None => Err(EmptySchedulerError)
          }
     }
 
@@ -117,21 +125,21 @@ impl<C> ProbeScheduler<C> where C: Collect {
 }
 
 struct Timer {
-    task_tx: Sender<(Timer, Sender<Timer>, Duration)>
+    task_tx: Sender<(Sender<()>, Duration)>
 }
 
 impl Timer {
-    fn start() -> Timer {
-        let (task_tx, task_rx): (_, Receiver<(Timer, Sender<Timer>, Duration)>) = channel();
+    fn spawn() -> Timer {
+        let (task_tx, task_rx): (_, Receiver<(Sender<()>, Duration)>) = channel();
 
         spawn(move || {
             loop {
-                if let Err(error) = task_rx.recv().map(|(timer, alarm_tx, duration)| {
+                if let Err(error) = task_rx.recv().map(|(alarm_tx, duration)| {
                     sleep(StdDuration::new(
                         duration.num_seconds() as u64,
                         (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
                     ));
-                    alarm_tx.send(timer)
+                    alarm_tx.send(())
                 }) {
                     info!("Timer thread finished: {}", error);
                     return ();
@@ -144,9 +152,9 @@ impl Timer {
         }
     }
 
-    fn alarm_in(self, duration: Duration) -> Result<Receiver<Timer>, SendError<(Timer, Sender<Timer>, Duration)>> {
+    fn alarm_in(&self, duration: Duration) -> Result<Receiver<()>, SendError<(Sender<()>, Duration)>> {
         let (alarm_tx, alarm_rx) = channel();
-        self.task_tx.clone().send((self, alarm_tx, duration)).map(|_| alarm_rx)
+        self.task_tx.send((alarm_tx, duration)).map(|_| alarm_rx)
     }
 }
 
@@ -154,7 +162,6 @@ pub fn start<C>(collector: &C, events: Receiver<CollectorEvent>) -> JoinHandle<(
     let probe_collector = collector.clone();
     spawn(move || {
         let mut ps = ProbeScheduler::new();
-        let timer = Timer::start();
 
         //TODO: load modules
         //TODO: schedule modules
@@ -166,18 +173,22 @@ pub fn start<C>(collector: &C, events: Receiver<CollectorEvent>) -> JoinHandle<(
         //   and it and use it to wait https://github.com/PeterReid/schedule_recv
 
         loop {
-            let probes = ps.wait().expect("no probes configured to run");
-            let mut run_collector = probe_collector.clone();
-            let mut shared_exec = SharedThreadProbeExecutor::new();
+            match ps.next().expect("no probes configured to run") {
+                Schedule::Probes(probes) => {
+                    let mut run_collector = probe_collector.clone();
+                    let mut shared_exec = SharedThreadProbeExecutor::new();
 
-            for probe in probes {
-                match probe.run_mode() {
-                    ProbeRunMode::SharedThread => shared_exec.push(probe)
+                    for probe in probes {
+                        match probe.run_mode() {
+                            ProbeRunMode::SharedThread => shared_exec.push(probe)
+                        }
+                    }
+
+                    for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_ok()).map(|r| r.unwrap()) {
+                        //TODO: log run errors
+                    }
                 }
-            }
-
-            for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_ok()).map(|r| r.unwrap()) {
-                //TODO: log run errors
+                Schedule::Wait(chan) => chan.recv().expect("timer died") //TODO: select!
             }
         }
     })
@@ -293,7 +304,7 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_wait_should_provide_porbes_according_to_schedule() {
+    fn probe_scheduler_next_should_provide_porbes_according_to_schedule() {
         let mut m1 = StubModule::new("m1");
         m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p1"));
 
@@ -306,13 +317,18 @@ mod test {
         ps.schedule(&m1);
         ps.schedule(&m2);
 
-        let result = ps.wait();
-        assert!(result.is_ok());
-
         let mut collector = StubCollector { values: Vec::new() };
-        let probes = result.unwrap();
-        for probe in probes {
-            probe.run(&mut collector).unwrap();
+        if let Schedule::Wait(chan) = ps.next().unwrap() {
+            chan.recv().expect("timer died");
+        } else {
+            panic!("expected need to wait");
+        }
+        if let Schedule::Probes(probes) = ps.next().unwrap() {
+            for probe in probes {
+                probe.run(&mut collector).unwrap();
+            }
+        } else {
+            panic!("expected probes");
         }
 
         assert_eq!(collector.text_values(), vec![
@@ -322,7 +338,7 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_wait_should_count_missed_schedules() {
+    fn probe_scheduler_next_should_count_missed_schedules() {
         use std::thread::sleep_ms;
 
         let mut m1 = StubModule::new("m1");
@@ -339,13 +355,16 @@ mod test {
         sleep_ms(200);
 
         {
-            let result = ps.wait();
+            let result = ps.next();
             assert!(result.is_ok());
 
             let mut collector = StubCollector { values: Vec::new() };
-            let probes = result.unwrap();
-            for probe in probes {
-                probe.run(&mut collector).unwrap();
+            if let Schedule::Probes(probes) = result.unwrap() {
+                for probe in probes {
+                    probe.run(&mut collector).unwrap();
+                }
+            } else {
+                panic!("expected probes");
             }
 
             assert_eq!(collector.text_values(), vec![
@@ -362,8 +381,8 @@ mod test {
     fn timer() {
         use super::Timer;
 
-        let mut timer = Timer::start();
-        timer = timer.alarm_in(Duration::milliseconds(10)).unwrap().recv().unwrap();
+        let timer = Timer::spawn();
+        assert!(timer.alarm_in(Duration::milliseconds(10)).unwrap().recv().is_ok());
         assert!(timer.alarm_in(Duration::milliseconds(10)).unwrap().recv().is_ok());
     }
 }
