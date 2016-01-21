@@ -1,5 +1,5 @@
 use collector::{Collect, CollectorEvent};
-//use asynchronous::{Deferred, ControlFlow};
+use carboxyl::{Sink, Stream};
 use std::thread::{spawn, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
@@ -7,8 +7,6 @@ use std::error::Error;
 use time::Duration;
 use std::time::Duration as StdDuration;
 use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
-use std::sync::mpsc::channel;
-use std::sync::mpsc::{Receiver, Sender, SendError};
 use std::thread::sleep;
 
 #[allow(dead_code)]
@@ -85,7 +83,7 @@ impl Error for EmptySchedulerError {
 }
 
 pub enum Schedule<C> where C: Collect {
-    Wait(Receiver<()>),
+    Wait(Stream<Alarm>),
     Probes(Vec<Rc<Probe<C>>>)
 }
 
@@ -106,7 +104,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
 
     pub fn next(&mut self) -> Result<Schedule<C>, EmptySchedulerError> {
          match self.scheduler.next() {
-             Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration).expect("timer died"))),
+             Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration))),
              Some(NextSchedule::Missed(probe_runs)) => {
                  //TODO: log missed
                  self.missed = self.missed + probe_runs.len();
@@ -125,40 +123,53 @@ impl<C> ProbeScheduler<C> where C: Collect {
 }
 
 struct Timer {
-    task_tx: Sender<(Sender<()>, Duration)>
+    task_sink: Sink<(Sink<Alarm>, Duration)>
 }
+
+#[derive(Clone)]
+struct Alarm;
+
+unsafe impl Sync for Alarm {}
+unsafe impl Send for Alarm {}
 
 impl Timer {
     fn spawn() -> Timer {
-        let (task_tx, task_rx): (_, Receiver<(Sender<()>, Duration)>) = channel();
+        let task_sink = Sink::new();
+        let task_stream = task_sink.stream();
 
         spawn(move || {
-            loop {
-                if let Err(error) = task_rx.recv().map(|(alarm_tx, duration)| {
-                    sleep(StdDuration::new(
-                        duration.num_seconds() as u64,
-                        (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
-                    ));
-                    alarm_tx.send(())
-                }) {
-                    info!("Timer thread finished: {}", error);
-                    return ();
-                }
+            for (alarm_sink, duration) in task_stream.events() {
+                let duration: Duration = duration;
+                let alarm_sink: Sink<Alarm> = alarm_sink;
+
+                sleep(StdDuration::new(
+                    duration.num_seconds() as u64,
+                    (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
+                ));
+                alarm_sink.send(Alarm);
             }
         });
 
         Timer {
-            task_tx: task_tx
+            task_sink: task_sink
         }
     }
 
-    fn alarm_in(&self, duration: Duration) -> Result<Receiver<()>, SendError<(Sender<()>, Duration)>> {
-        let (alarm_tx, alarm_rx) = channel();
-        self.task_tx.send((alarm_tx, duration)).map(|_| alarm_rx)
+    fn alarm_in(&self, duration: Duration) -> Stream<Alarm> {
+        let alarm_sink = Sink::new();
+        let alarm_stream = alarm_sink.stream();
+        self.task_sink.send((alarm_sink, duration));
+        alarm_stream
     }
 }
 
-pub fn start<C>(collector: &C, events: Receiver<CollectorEvent>) -> JoinHandle<()> where C: Collect + Clone + Send + 'static {
+#[derive(Clone)]
+enum ProbeLoopEvents {
+    Collector(CollectorEvent),
+    Timer(Alarm)
+}
+
+pub fn start<C>(collector: &C, events: Stream<CollectorEvent>) -> JoinHandle<()> where C: Collect + Clone + Send + 'static {
     let probe_collector = collector.clone();
     spawn(move || {
         let mut ps = ProbeScheduler::new();
@@ -188,7 +199,16 @@ pub fn start<C>(collector: &C, events: Receiver<CollectorEvent>) -> JoinHandle<(
                         //TODO: log run errors
                     }
                 }
-                Schedule::Wait(chan) => chan.recv().expect("timer died") //TODO: select!
+                Schedule::Wait(alarms) => {
+                    for event in events.map(|ce| ProbeLoopEvents::Collector(ce))
+                        .merge(&alarms.map(|a| ProbeLoopEvents::Timer(a)))
+                        .events() {
+                        match event {
+                            ProbeLoopEvents::Collector(CollectorEvent::Shutdown) => return,
+                            ProbeLoopEvents::Timer(_) => break
+                        }
+                    }
+                }
             }
         }
     })
@@ -318,8 +338,8 @@ mod test {
         ps.schedule(&m2);
 
         let mut collector = StubCollector { values: Vec::new() };
-        if let Schedule::Wait(chan) = ps.next().unwrap() {
-            chan.recv().expect("timer died");
+        if let Schedule::Wait(stream) = ps.next().unwrap() {
+            stream.events().next();
         } else {
             panic!("expected need to wait");
         }
@@ -382,8 +402,8 @@ mod test {
         use super::Timer;
 
         let timer = Timer::spawn();
-        assert!(timer.alarm_in(Duration::milliseconds(10)).unwrap().recv().is_ok());
-        assert!(timer.alarm_in(Duration::milliseconds(10)).unwrap().recv().is_ok());
+        assert!(timer.alarm_in(Duration::milliseconds(10)).events().next().is_some());
+        assert!(timer.alarm_in(Duration::milliseconds(10)).events().next().is_some());
     }
 }
 

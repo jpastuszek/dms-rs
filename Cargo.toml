@@ -16,6 +16,6 @@ chrono = "*"
 time = "~ 0.1"
 capnp = "*"
 capnpc = "*"
-asynchronous = "~0.4"
+carboxyl = "0.1.2"
 token_scheduler = { path = "../token_scheduler" }
 

@@ -7,11 +7,11 @@ extern crate env_logger;
 extern crate nanomsg;
 extern crate chrono;
 extern crate time;
+extern crate carboxyl;
 
 extern crate capnp;
 extern crate capnpc;
 
-extern crate asynchronous;
 extern crate token_scheduler;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16

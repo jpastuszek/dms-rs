@@ -82,6 +82,7 @@ impl Collect for Collector {
     }
 }
 
+#[derive(Clone)]
 pub enum CollectorEvent {
     Shutdown
 }
