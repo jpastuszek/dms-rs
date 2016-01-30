@@ -195,8 +195,8 @@ pub fn start<C>(collector: &C, events: Stream<CollectorEvent>) -> JoinHandle<()>
                         }
                     }
 
-                    for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_ok()).map(|r| r.unwrap()) {
-                        //TODO: log run errors
+                    for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_err()).map(|r| r.unwrap_err()) {
+                        error!("probe error: {}", error);
                     }
                 }
                 Schedule::Wait(alarms) => {
