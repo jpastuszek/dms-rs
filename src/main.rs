@@ -3,6 +3,7 @@ extern crate clap;
 use clap::{Arg, App};
 
 #[macro_use] extern crate log;
+//TODO: use flexi_logger
 extern crate env_logger;
 extern crate nanomsg;
 extern crate chrono;
@@ -39,7 +40,7 @@ fn main() {
 
     let collector_thread = collector::CollectorThread::spawn("ipc:///tmp/rdms_data_store.ipc");
 
-    let mut collector = collector_thread.new_collector();
+    let collector = collector_thread.new_collector();
 
     producer::start(collector)
 }

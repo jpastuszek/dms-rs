@@ -52,6 +52,7 @@ impl CollectorThread {
     }
 }
 
+//TODO: move to producer module?
 pub trait Collect {
     fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> ();
 }

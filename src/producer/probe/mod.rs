@@ -111,6 +111,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
              Some(NextSchedule::Missed(probe_runs)) => {
                  //TODO: log missed
                  self.missed = self.missed + probe_runs.len();
+                 warn!("{} probes overrun their scheduled run time; overruns since start: {}", probe_runs.len(), self.missed);
                  self.next()
              },
              Some(NextSchedule::Current(probes)) => {
@@ -172,9 +173,15 @@ enum ProbeLoopEvents {
     Timer(Alarm)
 }
 
+mod hello_world;
+
 pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<()> {
     spawn(move || {
         let mut ps = ProbeScheduler::new();
+
+        let hello_world_module = hello_world::HelloWorldModule;
+
+        ps.schedule(&hello_world_module);
 
         //TODO: load modules
         //TODO: schedule modules
