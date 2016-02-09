@@ -1,3 +1,7 @@
+use carboxyl::Sink;
+
+use collector::Collector;
+
 #[derive(Clone)]
 pub enum ProducerEvent {
     Shutdown
@@ -5,16 +9,12 @@ pub enum ProducerEvent {
 
 mod probe;
 
-/*
-pub fn start<S>(data_processor_address: S) -> CollectorThread where S: Into<String> {
-    let collector_thread = CollectorThread::spawn(data_processor_address);
+pub fn start(collector: Collector) -> () {
+    //TODO: shutdown trigger somehow
+    let event_sink = Sink::new();
 
-    let probe = probe::start(collector_thread.new_collector());
-    //TODO: register modules
-    collector_thread.add(probe);
-
-    collector_thread
+    let probe = probe::start(collector.clone(), event_sink.stream());
+    probe.join().unwrap();
 }
-*/
 
 

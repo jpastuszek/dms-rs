@@ -8,7 +8,7 @@ use std::time::Duration as StdDuration;
 use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
 use std::thread::sleep;
 
-use collector::Collect;
+use collector::{Collect, Collector};
 use producer::ProducerEvent;
 
 #[allow(dead_code)]
@@ -107,6 +107,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
     pub fn next(&mut self) -> Result<Schedule<C>, EmptySchedulerError> {
          match self.scheduler.next() {
              Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration))),
+             //TODO rename Missed to Overrun
              Some(NextSchedule::Missed(probe_runs)) => {
                  //TODO: log missed
                  self.missed = self.missed + probe_runs.len();
@@ -167,12 +168,11 @@ impl Timer {
 
 #[derive(Clone)]
 enum ProbeLoopEvents {
-    Collector(CollectorEvent),
+    ProducerEvent(ProducerEvent),
     Timer(Alarm)
 }
 
-pub fn start(collector: &Collector, events: Stream<CollectorEvent>) -> JoinHandle<()> {
-    let probe_collector = collector.clone();
+pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<()> {
     spawn(move || {
         let mut ps = ProbeScheduler::new();
 
@@ -188,7 +188,7 @@ pub fn start(collector: &Collector, events: Stream<CollectorEvent>) -> JoinHandl
         loop {
             match ps.next().expect("no probes configured to run") {
                 Schedule::Probes(probes) => {
-                    let mut run_collector = probe_collector.clone();
+                    let mut run_collector = collector.clone();
                     let mut shared_exec = SharedThreadProbeExecutor::new();
 
                     for probe in probes {
@@ -202,11 +202,11 @@ pub fn start(collector: &Collector, events: Stream<CollectorEvent>) -> JoinHandl
                     }
                 }
                 Schedule::Wait(alarms) => {
-                    for event in events.map(|ce| ProbeLoopEvents::Collector(ce))
+                    for event in events.map(|ce| ProbeLoopEvents::ProducerEvent(ce))
                         .merge(&alarms.map(|a| ProbeLoopEvents::Timer(a)))
                         .events() {
                         match event {
-                            ProbeLoopEvents::Collector(CollectorEvent::Shutdown) => return,
+                            ProbeLoopEvents::ProducerEvent(ProducerEvent::Shutdown) => return,
                             ProbeLoopEvents::Timer(_) => break
                         }
                     }

@@ -61,6 +61,15 @@ pub struct Collector {
     sink: SyncSender<Box<RawDataPoint>>,
 }
 
+impl Clone for Collector {
+    fn clone(&self) -> Self {
+        Collector {
+            timestamp: self.timestamp,
+            sink: self.sink.clone()
+        }
+    }
+}
+
 impl Collect for Collector {
     fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> () {
         let raw_data_point = Box::new(RawDataPoint {

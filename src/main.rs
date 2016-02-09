@@ -22,6 +22,7 @@ mod raw_data_point_capnp {
 
 mod messaging;
 mod collector;
+mod producer;
 
 #[cfg(not(test))]
 fn main() {
@@ -40,7 +41,7 @@ fn main() {
 
     let mut collector = collector_thread.new_collector();
 
-    collector.collect("myserver", "os/cpu/usage", "user", collector::DataValue::Float(0.4));
+    producer::start(collector)
 }
 
 /*
