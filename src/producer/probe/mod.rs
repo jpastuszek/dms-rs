@@ -1,4 +1,3 @@
-use collector::{Collect, CollectorEvent};
 use carboxyl::{Sink, Stream};
 use std::thread::{spawn, JoinHandle};
 use std::rc::Rc;
@@ -8,6 +7,9 @@ use time::Duration;
 use std::time::Duration as StdDuration;
 use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
 use std::thread::sleep;
+
+use collector::Collect;
+use producer::ProducerEvent;
 
 #[allow(dead_code)]
 pub enum ProbeRunMode {
@@ -169,7 +171,7 @@ enum ProbeLoopEvents {
     Timer(Alarm)
 }
 
-pub fn start<C>(collector: &C, events: Stream<CollectorEvent>) -> JoinHandle<()> where C: Collect + Clone + Send + 'static {
+pub fn start(collector: &Collector, events: Stream<CollectorEvent>) -> JoinHandle<()> {
     let probe_collector = collector.clone();
     spawn(move || {
         let mut ps = ProbeScheduler::new();
@@ -196,7 +198,7 @@ pub fn start<C>(collector: &C, events: Stream<CollectorEvent>) -> JoinHandle<()>
                     }
 
                     for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_err()).map(|r| r.unwrap_err()) {
-                        error!("probe error: {}", error);
+                        error!("Probe reported an error: {}", error);
                     }
                 }
                 Schedule::Wait(alarms) => {
