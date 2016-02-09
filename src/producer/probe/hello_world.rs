@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use time::Duration;
 
-use collector::Collect;
+use collector::{Collect, Collector};
 use messaging::DataValue;
 use super::{ProbeRunMode, ProbeSchedule, Probe, Module};
 
@@ -40,6 +40,10 @@ impl<C> Module<C> for HelloWorldModule where C: Collect {
             }
         ]
     }
+}
+
+pub fn init() -> Box<Module<Collector>> {
+    Box::new(HelloWorldModule)
 }
 
 

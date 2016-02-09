@@ -179,9 +179,13 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
     spawn(move || {
         let mut ps = ProbeScheduler::new();
 
-        let hello_world_module = hello_world::HelloWorldModule;
+        let mut modules: Vec<Box<Module<Collector>>> = vec![];
 
-        ps.schedule(&hello_world_module);
+        modules.push(hello_world::init());
+
+        for module in modules {
+            ps.schedule(&*module);
+        }
 
         //TODO: load modules
         //TODO: schedule modules
