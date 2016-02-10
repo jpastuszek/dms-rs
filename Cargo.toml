@@ -4,13 +4,17 @@ version = "0.0.1"
 authors = ["Jakub Pastuszek <jpastuszek@gmail.com>"]
 build = "build.rs"
 
+[[bin]]
+name = "dms_agent"
+path = "src/dms_agent.rs"
+
 [build-dependencies]
 capnpc = "*"
 
 [dependencies]
-clap = "*"
-log = "*"
-env_logger = "*"
+clap = "2.0.6"
+log = "0.3.5"
+flexi_logger = "0.3.3"
 nanomsg = "*"
 chrono = "*"
 time = "~ 0.1"
