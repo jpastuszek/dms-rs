@@ -27,7 +27,8 @@ mod collector;
 mod producer;
 
 fn dms_agent(args: ArgMatches) -> Result<(), (String, i32)> {
-    let collector_thread = collector::CollectorThread::spawn("ipc:///tmp/rdms_data_store.ipc");
+    //TODO: don't panic on wrong collector address + shutdown correctly
+    let collector_thread = collector::CollectorThread::spawn(args.value_of("collector-url").unwrap_or("ipc:///tmp/rdms_data_store.ipc"));
 
     let collector = collector_thread.new_collector();
 
@@ -46,6 +47,12 @@ fn main() {
              .long("log-sepc")
              .value_name("LOG_LEVEL_SPEC")
              .help("Logging level specification, e.g: dms_agent=info")
+             .takes_value(true))
+        .arg(Arg::with_name("collector-url")
+             .short("c")
+             .long("collector-url")
+             .value_name("URL")
+             .help("Nanomsg URL to collector [ipc:///tmp/rdms_data_store.ipc]")
              .takes_value(true))
         .get_matches();
 
