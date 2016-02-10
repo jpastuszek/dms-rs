@@ -121,6 +121,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
          }
     }
 
+    #[allow(dead_code)]
     pub fn missed(&self) -> usize {
         self.missed
     }

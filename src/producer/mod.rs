@@ -17,4 +17,3 @@ pub fn start(collector: Collector) -> () {
     probe.join().unwrap();
 }
 
-
