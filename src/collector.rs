@@ -18,18 +18,18 @@ impl CollectorThread {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let _ = thread::spawn(move || {
-            let mut socket = Socket::new(Protocol::Push).ok().expect("Cannot create push socket!");
-            let mut _endpoint = match socket.connect(&data_processor_url.serialize()[..]) {
-                Ok(ep) => ep,
-                Err(error) => panic!("Failed to connect data processor at '{}': {}", data_processor_url, error)
-            };
+            let mut socket = Socket::new(Protocol::Push).ok()
+                .expect("Cannot create push socket!");
+            let mut _endpoint = socket.connect(&data_processor_url.serialize()[..])
+                .expect(&format!("Failed to connect data processor at '{}'", data_processor_url));
 
             loop {
-                // TODO: The mpsc::Receiver type can now be converted into an iterator with
-                // into_iter on the IntoIterator trait.
                 match rx.recv() {
                     Ok(raw_data_point) => {
-                        socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp).unwrap();
+                        trace!("Sending message: {:?}", raw_data_point);
+                        if let Err(err) = socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp) {
+                            error!("Failed to send raw data point to data processor at '{}': {}", &data_processor_url, err);
+                        }
                     },
                     Err(error) => {
                         info!("Collector thread finished: {}", error);

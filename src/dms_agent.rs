@@ -15,7 +15,7 @@ extern crate capnpc;
 extern crate token_scheduler;
 
 use std::str::FromStr;
-use clap::{ArgMatches, App, Arg};
+use clap::{App, Arg};
 use url::Url;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
@@ -40,6 +40,10 @@ fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     Ok(())
 }
 
+//TODO: udpate nanomsg
+//TODO: update capnp
+//TODO: pass location arg to raw data points
+//TODO: set timestamp on raw data points to current batch
 fn main() {
     let args = App::new("Distributed Monitoring System Agent")
         .version(crate_version!())
@@ -49,7 +53,7 @@ fn main() {
              .short("l")
              .long("log-sepc")
              .value_name("LOG_LEVEL_SPEC")
-             .help("Logging level specification, e.g: dms_agent=info")
+             .help("Logging level specification, e.g: [info]")
              .takes_value(true))
         .arg(Arg::with_name("data-processor-url")
              .short("c")
@@ -59,8 +63,7 @@ fn main() {
              .takes_value(true))
         .get_matches();
 
-    program::init(args.value_of("log-spec"));
-
+    program::init(Some(args.value_of("log-spec").unwrap_or("info")));
 
     let url = value_t!(args, "data-processor-url", Url).unwrap_or_else(|err|
         match err.kind {

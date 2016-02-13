@@ -95,10 +95,10 @@ pub trait SendMessage<T> where T: SerDeMessage {
 }
 
 impl<T> SendMessage<T> for Socket where T: SerDeMessage {
-    fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), SendingError> where S: Into<String> {
+    fn send_message<S>(&mut self, topic: S, message: T, encoding: Encoding) -> Result<(), SendingError> where S: Into<String>, T: Debug {
 
         let topic: String = topic.into();
-        debug!("Sending message with {:?} on topic {}", T::data_type(), topic);
+        trace!("Sending message on topic '{}': {:?}", topic, message);
 
         let mut data: Vec<u8>;
 
