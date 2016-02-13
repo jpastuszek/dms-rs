@@ -3,6 +3,7 @@ use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 
 use nanomsg::{Socket, Protocol};
+use url::Url;
 use chrono::{DateTime, UTC};
 
 use messaging::*;
@@ -13,15 +14,14 @@ pub struct CollectorThread {
 }
 
 impl CollectorThread {
-    pub fn spawn<S>(data_processor_address: S) -> CollectorThread where S: Into<String> {
+    pub fn spawn(data_processor_url: Url) -> CollectorThread {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
-        let local_data_processor_address = data_processor_address.into();
         let _ = thread::spawn(move || {
             let mut socket = Socket::new(Protocol::Push).ok().expect("Cannot create push socket!");
-            let mut _endpoint = match socket.connect(&local_data_processor_address) {
+            let mut _endpoint = match socket.connect(&data_processor_url.serialize()[..]) {
                 Ok(ep) => ep,
-                Err(error) => panic!("Failed to connect data processor at '{}': {}", local_data_processor_address, error)
+                Err(error) => panic!("Failed to connect data processor at '{}': {}", data_processor_url, error)
             };
 
             loop {

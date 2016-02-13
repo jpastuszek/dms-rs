@@ -21,5 +21,6 @@ time = "~ 0.1"
 capnp = "*"
 capnpc = "*"
 carboxyl = "0.1.2"
+url = "0.5.5"
 token_scheduler = { path = "../token_scheduler" }
 

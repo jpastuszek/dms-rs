@@ -6,6 +6,7 @@ extern crate flexi_logger;
 extern crate time;
 extern crate chrono; // ?
 extern crate nanomsg;
+extern crate url;
 extern crate carboxyl;
 
 extern crate capnp;
@@ -13,7 +14,9 @@ extern crate capnpc;
 
 extern crate token_scheduler;
 
+use std::str::FromStr;
 use clap::{ArgMatches, App, Arg};
+use url::Url;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
@@ -26,9 +29,9 @@ mod messaging;
 mod collector;
 mod producer;
 
-fn dms_agent(args: ArgMatches) -> Result<(), (String, i32)> {
+fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     //TODO: don't panic on wrong collector address + shutdown correctly
-    let collector_thread = collector::CollectorThread::spawn(args.value_of("collector-url").unwrap_or("ipc:///tmp/rdms_data_store.ipc"));
+    let collector_thread = collector::CollectorThread::spawn(url.to_owned());
 
     let collector = collector_thread.new_collector();
 
@@ -48,15 +51,23 @@ fn main() {
              .value_name("LOG_LEVEL_SPEC")
              .help("Logging level specification, e.g: dms_agent=info")
              .takes_value(true))
-        .arg(Arg::with_name("collector-url")
+        .arg(Arg::with_name("data-processor-url")
              .short("c")
-             .long("collector-url")
+             .long("data-processor-url")
              .value_name("URL")
-             .help("Nanomsg URL to collector [ipc:///tmp/rdms_data_store.ipc]")
+             .help("Nanomsg URL to data processor [ipc:///tmp/rdms_data_store.ipc]")
              .takes_value(true))
         .get_matches();
 
     program::init(args.value_of("log-spec"));
 
-    dms_agent(args).unwrap_or_else(|(err, code)| program::exit_with_error(err, code));
+
+    let url = value_t!(args, "data-processor-url", Url).unwrap_or_else(|err|
+        match err.kind {
+            clap::ErrorKind::ArgumentNotFound => FromStr::from_str("ipc:///tmp/rdms_data_store.ipc").unwrap(),
+            _ => err.exit()
+        }
+    );
+
+    dms_agent(&url).unwrap_or_else(|(err, code)| program::exit_with_error(err, code));
 }
