@@ -1,4 +1,5 @@
 use carboxyl::{Sink, Stream};
+use std::sync::mpsc::{channel, Sender};
 use std::thread::{spawn, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
@@ -128,7 +129,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
 }
 
 struct Timer {
-    task_sink: Sink<(Sink<Alarm>, Duration)>
+    task_send: Sender<(Sink<Alarm>, Duration)>
 }
 
 #[derive(Clone)]
@@ -139,31 +140,35 @@ unsafe impl Send for Alarm {}
 
 impl Timer {
     fn spawn() -> Timer {
-        let task_sink = Sink::new();
-        let task_stream = task_sink.stream();
+        let (task_send,  task_recv) = channel();
 
         spawn(move || {
-            for (alarm_sink, duration) in task_stream.events() {
-                let duration: Duration = duration;
-                let alarm_sink: Sink<Alarm> = alarm_sink;
+            loop {
+                match task_recv.recv() {
+                    Ok((alarm_sink, duration)) => {
+                        let duration: Duration = duration;
+                        let alarm_sink: Sink<Alarm> = alarm_sink;
 
-                sleep(StdDuration::new(
-                    duration.num_seconds() as u64,
-                    (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
-                ));
-                alarm_sink.send(Alarm);
+                        sleep(StdDuration::new(
+                            duration.num_seconds() as u64,
+                            (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
+                        ));
+                        alarm_sink.send(Alarm);
+                    }
+                    Err(_) => return // client gone
+                }
             }
         });
 
         Timer {
-            task_sink: task_sink
+            task_send: task_send
         }
     }
 
     fn alarm_in(&self, duration: Duration) -> Stream<Alarm> {
         let alarm_sink = Sink::new();
         let alarm_stream = alarm_sink.stream();
-        self.task_sink.send((alarm_sink, duration));
+        self.task_send.send((alarm_sink, duration)).expect("Timer tread died!");
         alarm_stream
     }
 }
