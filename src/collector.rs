@@ -9,26 +9,25 @@ use chrono::{DateTime, UTC};
 use messaging::*;
 
 //TODO: rename
-pub struct CollectorThread {
+pub struct Sender {
     sink: SyncSender<Box<RawDataPoint>>
 }
 
-impl CollectorThread {
-    pub fn spawn(data_processor_url: Url) -> CollectorThread {
+impl Sender {
+    pub fn spawn(processor_url: Url) -> Sender {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let _ = thread::spawn(move || {
             let mut socket = Socket::new(Protocol::Push).ok()
                 .expect("Cannot create push socket!");
-            let mut _endpoint = socket.connect(&data_processor_url.serialize()[..])
-                .expect(&format!("Failed to connect data processor at '{}'", data_processor_url));
+            let mut _endpoint = socket.connect(&processor_url.serialize()[..])
+                .expect(&format!("Failed to connect data processor at '{}'", processor_url));
 
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
-                        trace!("Sending message: {:?}", raw_data_point);
                         if let Err(err) = socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp) {
-                            error!("Failed to send raw data point to data processor at '{}': {}", &data_processor_url, err);
+                            error!("Failed to send raw data point to data processor at '{}': {}", &processor_url, err);
                         }
                     },
                     Err(error) => {
@@ -39,12 +38,12 @@ impl CollectorThread {
             }
         });
 
-        CollectorThread {
+        Sender {
             sink: tx
         }
     }
 
-    pub fn new_collector(&self) -> Collector {
+    pub fn collector(&self) -> Collector {
         Collector {
             timestamp: UTC::now(),
             sink: self.sink.clone(),
@@ -52,7 +51,6 @@ impl CollectorThread {
     }
 }
 
-//TODO: move to producer module?
 pub trait Collect {
     fn collect(&mut self, location: &str, path: &str, component: &str, value: DataValue) -> ();
 }
@@ -98,13 +96,14 @@ mod test {
     pub use messaging::*;
     pub use nanomsg::{Socket, Protocol};
     pub use std::io::Read;
+    pub use url::Url;
 
-    mod collector_thread {
+    mod sender {
         pub use super::*;
         #[test]
         fn should_shut_down_after_going_out_of_scope() {
             {
-                let _ = CollectorThread::spawn("ipc:///tmp/test-collector1.ipc");
+                let _ = Sender::spawn(Url::parse("ipc:///tmp/test-collector1.ipc").unwrap());
             }
             assert!(true);
         }
@@ -117,8 +116,8 @@ mod test {
                 let mut pull = Socket::new(Protocol::Pull).unwrap();
                 let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
                 {
-                    let collector_thread = CollectorThread::spawn("ipc:///tmp/test-collector.ipc");
-                    let mut collector = collector_thread.new_collector();
+                    let sender = Sender::spawn(Url::parse("ipc:///tmp/test-collector.ipc").unwrap());
+                    let mut collector = sender.collector();
 
                     collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
                     collector.collect("foobar", "os/cpu/sys", "user", DataValue::Float(0.4));

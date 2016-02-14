@@ -31,9 +31,9 @@ mod producer;
 
 fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     //TODO: don't panic on wrong collector address + shutdown correctly
-    let collector_thread = collector::CollectorThread::spawn(url.to_owned());
+    let sender = collector::Sender::spawn(url.to_owned());
 
-    let collector = collector_thread.new_collector();
+    let collector = sender.collector();
 
     producer::start(collector);
 
@@ -55,17 +55,17 @@ fn main() {
              .value_name("LOG_LEVEL_SPEC")
              .help("Logging level specification, e.g: [info]")
              .takes_value(true))
-        .arg(Arg::with_name("data-processor-url")
+        .arg(Arg::with_name("processor-url")
              .short("c")
-             .long("data-processor-url")
+             .long("processor-url")
              .value_name("URL")
-             .help("Nanomsg URL to data processor [ipc:///tmp/rdms_data_store.ipc]")
+             .help("Nanomsg URL to raw data processor [ipc:///tmp/dms_processor.ipc]")
              .takes_value(true))
         .get_matches();
 
     program::init(Some(args.value_of("log-spec").unwrap_or("info")));
 
-    let url = value_t!(args, "data-processor-url", Url).unwrap_or_else(|err|
+    let url = value_t!(args, "processor-url", Url).unwrap_or_else(|err|
         match err.kind {
             clap::ErrorKind::ArgumentNotFound => FromStr::from_str("ipc:///tmp/rdms_data_store.ipc").unwrap(),
             _ => err.exit()
