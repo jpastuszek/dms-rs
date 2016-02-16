@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use time::Duration;
 
-use collector::{Collect, Collector};
+use sender::{Collect, Collector};
 use messaging::DataValue;
 use super::{ProbeRunMode, ProbeSchedule, Probe, Module};
 

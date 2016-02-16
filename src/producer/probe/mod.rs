@@ -9,7 +9,7 @@ use std::time::Duration as StdDuration;
 use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
 use std::thread::sleep;
 
-use collector::{Collect, Collector};
+use sender::{Collect, Collector};
 use producer::ProducerEvent;
 
 #[allow(dead_code)]
@@ -236,7 +236,7 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
 #[cfg(test)]
 mod test {
     use super::*;
-    use collector::Collect;
+    use sender::Collect;
     use messaging::DataValue;
     use time::Duration;
     use std::rc::Rc;

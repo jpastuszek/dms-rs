@@ -76,7 +76,7 @@ impl Sender {
                     },
                     Err(error) => {
                         info!("Collector thread finished: {}", error);
-                        return ();
+                        return;
                     }
                 }
             }

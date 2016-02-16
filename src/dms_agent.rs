@@ -26,12 +26,14 @@ mod raw_data_point_capnp {
 
 mod program;
 mod messaging;
-mod collector;
+mod sender;
 mod producer;
 
+use sender::Sender;
+
 fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
-    //TODO: don't panic on wrong collector address + shutdown correctly
-    let sender = collector::Sender::spawn(url.to_owned()).unwrap();
+    //TODO: don't panic on wrong processor address + shutdown correctly
+    let sender = Sender::spawn(url.to_owned()).unwrap();
 
     let collector = sender.collector();
 

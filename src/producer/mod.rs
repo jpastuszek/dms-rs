@@ -1,6 +1,6 @@
 use carboxyl::Sink;
 
-use collector::Collector;
+use sender::Collector;
 
 #[derive(Clone)]
 pub enum ProducerEvent {
