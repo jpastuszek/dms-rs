@@ -378,7 +378,8 @@ mod test {
 
     #[test]
     fn probe_scheduler_next_should_count_missed_schedules() {
-        use std::thread::sleep_ms;
+        use std::thread::sleep;
+        use std::time::Duration as StdDuration;
 
         let mut m1 = StubModule::new("m1");
         m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p1"));
@@ -391,7 +392,7 @@ mod test {
         ps.schedule(&m1);
         ps.schedule(&m2);
 
-        sleep_ms(200);
+        sleep(StdDuration::from_millis(200));
 
         {
             let result = ps.next();

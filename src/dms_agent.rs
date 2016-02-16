@@ -31,7 +31,7 @@ mod producer;
 
 fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     //TODO: don't panic on wrong collector address + shutdown correctly
-    let sender = collector::Sender::spawn(url.to_owned());
+    let sender = collector::Sender::spawn(url.to_owned()).unwrap();
 
     let collector = sender.collector();
 

@@ -1,28 +1,72 @@
 use std::thread;
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
+use std::error::Error;
+use std::fmt;
 
-use nanomsg::{Socket, Protocol};
+use nanomsg::{Socket, Protocol, Error as NanoError};
 use url::Url;
 use chrono::{DateTime, UTC};
 
 use messaging::*;
 
-//TODO: rename
+#[derive(Debug)]
+pub enum SenderError {
+    Connection(NanoError),
+    Configuration(NanoError),
+    Transport(NanoError)
+}
+
+impl From<NanoError> for SenderError {
+    fn from(err: NanoError) -> SenderError {
+        match err {
+            NanoError::ProtocolNotSupported => SenderError::Configuration(err),
+            NanoError::ProtocolNotAvailable => SenderError::Configuration(err),
+            NanoError::AddressFamilyNotSupported => SenderError::Configuration(err),
+            NanoError::ConnectionRefused => SenderError::Connection(err),
+            NanoError::AddressInUse => SenderError::Connection(err),
+            NanoError::NetworkDown => SenderError::Connection(err),
+            NanoError::NetworkUnreachable => SenderError::Connection(err),
+            NanoError::HostUnreachable => SenderError::Connection(err),
+            NanoError::ConnectionReset => SenderError::Connection(err),
+            NanoError::TimedOut => SenderError::Connection(err),
+            _ => SenderError::Transport(err)
+        }
+    }
+}
+
+impl Error for SenderError {
+    fn description(&self) -> &str {
+        match self {
+            &SenderError::Connection(_) => "Processor connecitivity issue",
+            &SenderError::Configuration(_) => "Sender configuration error",
+            &SenderError::Transport(_) => "Transport error",
+        }
+    }
+}
+
+impl fmt::Display for SenderError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &SenderError::Connection(err) => write!(f, "{}: {}", self.description(), err),
+            &SenderError::Configuration(err) => write!(f, "{}: {}", self.description(), err),
+            &SenderError::Transport(err) => write!(f, "{}: {}", self.description(), err),
+        }
+    }
+}
+
 pub struct Sender {
     sink: SyncSender<Box<RawDataPoint>>
 }
 
 impl Sender {
-    pub fn spawn(processor_url: Url) -> Sender {
+    pub fn spawn(processor_url: Url) -> Result<Sender, SenderError> {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
-        let _ = thread::spawn(move || {
-            let mut socket = Socket::new(Protocol::Push).ok()
-                .expect("Cannot create push socket!");
-            let mut _endpoint = socket.connect(&processor_url.serialize()[..])
-                .expect(&format!("Failed to connect data processor at '{}'", processor_url));
+        let mut socket = try!(Socket::new(Protocol::Push));
+        let mut _endpoint = try!(socket.connect(&processor_url.serialize()[..]));
 
+        let _ = thread::spawn(move || {
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
@@ -38,9 +82,9 @@ impl Sender {
             }
         });
 
-        Sender {
+        Ok(Sender {
             sink: tx
-        }
+        })
     }
 
     pub fn collector(&self) -> Collector {
@@ -93,9 +137,10 @@ impl Collect for Collector {
 #[cfg(test)]
 mod test {
     pub use super::*;
+    pub use std::io::Read;
+    pub use std::error::Error;
     pub use messaging::*;
     pub use nanomsg::{Socket, Protocol};
-    pub use std::io::Read;
     pub use url::Url;
 
     mod sender {
@@ -108,6 +153,15 @@ mod test {
             assert!(true);
         }
 
+        #[test]
+        fn should_fail_to_spawn_on_bad_url() {
+            let result =  Sender::spawn(Url::parse("foo:///bar").unwrap());
+            assert!(result.is_err());
+            if let Err(err) = result {
+                assert_eq!(err.description(), "Sender configuration error");
+            }
+        }
+
         mod collector {
             pub use super::*;
 
@@ -116,7 +170,7 @@ mod test {
                 let mut pull = Socket::new(Protocol::Pull).unwrap();
                 let mut _endpoint = pull.bind("ipc:///tmp/test-collector.ipc").unwrap();
                 {
-                    let sender = Sender::spawn(Url::parse("ipc:///tmp/test-collector.ipc").unwrap());
+                    let sender = Sender::spawn(Url::parse("ipc:///tmp/test-collector.ipc").unwrap()).unwrap();
                     let mut collector = sender.collector();
 
                     collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
@@ -135,6 +189,15 @@ mod test {
                     assert!(msg_string.contains("foobar"));
                 }
             }
+            /*
+            #[test]
+            fn collect_should_fail_if_sender_paniced() {
+                let sender = Sender::spawn(Url::parse("foo:///bar").unwrap()).unwrap();
+                let mut collector = sender.collector();
+
+                collector.collect("myserver", "os/cpu/usage", "user", DataValue::Float(0.4));
+            }
+            */
         }
     }
 }
