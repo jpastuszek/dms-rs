@@ -1,56 +1,48 @@
-use carboxyl::{Sink, Stream};
+use std::slice::Iter;
 use std::sync::mpsc::{channel, Sender};
 use std::thread::{spawn, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
-use time::Duration;
-use std::time::Duration as StdDuration;
-use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
 use std::thread::sleep;
+use std::time::Duration as StdDuration;
+use time::Duration;
+use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
+use carboxyl::{Sink, Stream};
 
 use sender::{Collect, Collector};
 use producer::ProducerEvent;
 
 #[allow(dead_code)]
-pub enum ProbeRunMode {
+pub enum RunMode {
     SharedThread,
     //DedicatedThread,
     //DedicatedProcess
 }
 
-pub struct ProbeSchedule<C> where C: Collect {
+pub struct RunPlan<C> where C: Collect {
     every: Duration,
     probe: Rc<Probe<C>>
-}
-
-impl<C> Clone for ProbeSchedule<C> where C: Collect {
-    fn clone(&self) -> ProbeSchedule<C> {
-        ProbeSchedule {
-            every: self.every.clone(),
-            probe: self.probe.clone()
-        }
-    }
 }
 
 pub trait Probe<C>: Send where C: Collect {
     fn name(&self) -> &str;
     fn run(&self, collector: &mut C) -> Result<(), String>;
-    fn run_mode(&self) -> ProbeRunMode;
+    fn run_mode(&self) -> RunMode;
 }
 
 pub trait Module<C> where C: Collect {
     fn name(&self) -> &str;
-    fn schedule(&self) -> Vec<ProbeSchedule<C>>;
+    fn schedule(&self) -> Iter<RunPlan<C>>;
 }
 
-pub struct SharedThreadProbeExecutor<C> where C: Collect {
+pub struct SharedThreadProbeRunner<C> where C: Collect {
     probes: Vec<Rc<Probe<C>>>
 }
 
-impl<C> SharedThreadProbeExecutor<C> where C: Collect {
-    pub fn new() -> SharedThreadProbeExecutor<C> {
-        SharedThreadProbeExecutor {
+impl<C> SharedThreadProbeRunner<C> where C: Collect {
+    pub fn new() -> SharedThreadProbeRunner<C> {
+        SharedThreadProbeRunner {
             probes: Vec::new()
         }
     }
@@ -89,7 +81,7 @@ impl Error for ProbeSchedulerError {
     }
 }
 
-pub enum Schedule<C> where C: Collect {
+pub enum ProbeSchedule<C> where C: Collect {
     Wait(Stream<Alarm>),
     Probes(Vec<Rc<Probe<C>>>)
 }
@@ -105,13 +97,13 @@ impl<C> ProbeScheduler<C> where C: Collect {
 
     pub fn schedule<'m>(&mut self, module: &'m Module<C>) {
         for probe_schedule in module.schedule() {
-            self.scheduler.every(probe_schedule.every, probe_schedule.probe);
+            self.scheduler.every(probe_schedule.every, probe_schedule.probe.clone());
         }
     }
 
-    pub fn next(&mut self) -> Result<Schedule<C>, ProbeSchedulerError> {
+    pub fn next(&mut self) -> Result<ProbeSchedule<C>, ProbeSchedulerError> {
          match self.scheduler.next() {
-             Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration))),
+             Some(NextSchedule::NextIn(duration)) => Ok(ProbeSchedule::Wait(self.timer.alarm_in(duration))),
              Some(NextSchedule::Overrun(probe_runs)) => {
                  //TODO: log overrun
                  self.overrun = self.overrun + probe_runs.len() as u64;
@@ -119,7 +111,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
                  self.next()
              },
              Some(NextSchedule::Current(probes)) => {
-                 Ok(Schedule::Probes(probes))
+                 Ok(ProbeSchedule::Probes(probes))
              }
              None => Err(ProbeSchedulerError::Empty)
          }
@@ -207,13 +199,13 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
 
         loop {
             match ps.next().expect("no probes configured to run") {
-                Schedule::Probes(probes) => {
+                ProbeSchedule::Probes(probes) => {
                     let mut run_collector = collector.clone();
-                    let mut shared_exec = SharedThreadProbeExecutor::new();
+                    let mut shared_exec = SharedThreadProbeRunner::new();
 
                     for probe in probes {
                         match probe.run_mode() {
-                            ProbeRunMode::SharedThread => shared_exec.push(probe)
+                            RunMode::SharedThread => shared_exec.push(probe)
                         }
                     }
 
@@ -221,7 +213,7 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
                         error!("Probe reported an error: {}", error);
                     }
                 }
-                Schedule::Wait(alarms) => {
+                ProbeSchedule::Wait(alarms) => {
                     for event in events.map(|ce| ProbeLoopEvents::ProducerEvent(ce))
                         .merge(&alarms.map(|a| ProbeLoopEvents::Timer(a)))
                         .events() {
@@ -242,11 +234,12 @@ mod test {
     use sender::Collect;
     use messaging::DataValue;
     use time::Duration;
+    use std::slice::Iter;
     use std::rc::Rc;
 
     struct StubModule<C> where C: Collect {
         name: String,
-        schedule: Vec<ProbeSchedule<C>>
+        schedule: Vec<RunPlan<C>>
     }
 
     struct StubProbe {
@@ -275,8 +268,8 @@ mod test {
             Ok(())
         }
 
-        fn run_mode(&self) -> ProbeRunMode {
-            ProbeRunMode::SharedThread
+        fn run_mode(&self) -> RunMode {
+            RunMode::SharedThread
         }
     }
 
@@ -290,7 +283,7 @@ mod test {
 
         fn add_schedule(&mut self, every: Duration, probe: Rc<Probe<C>>) {
             self.schedule.push(
-                ProbeSchedule {
+                RunPlan {
                     every: every,
                     probe: probe
                 }
@@ -303,8 +296,8 @@ mod test {
             &self.name
         }
 
-        fn schedule(&self) -> Vec<ProbeSchedule<C>> {
-            self.schedule.clone()
+        fn schedule(&self) -> Iter<RunPlan<C>> {
+            self.schedule.iter()
         }
     }
 
@@ -330,7 +323,7 @@ mod test {
         let p2 = StubProbe::new("p2");
         let p3 = StubProbe::new("p3");
 
-        let mut exec = SharedThreadProbeExecutor::new();
+        let mut exec = SharedThreadProbeRunner::new();
         exec.push(p1);
         exec.push(p2);
         exec.push(p3);
@@ -360,12 +353,12 @@ mod test {
         ps.schedule(&m2);
 
         let mut collector = StubCollector { values: Vec::new() };
-        if let Schedule::Wait(stream) = ps.next().unwrap() {
+        if let ProbeSchedule::Wait(stream) = ps.next().unwrap() {
             stream.events().next();
         } else {
             panic!("expected need to wait");
         }
-        if let Schedule::Probes(probes) = ps.next().unwrap() {
+        if let ProbeSchedule::Probes(probes) = ps.next().unwrap() {
             for probe in probes {
                 probe.run(&mut collector).unwrap();
             }
@@ -402,7 +395,7 @@ mod test {
             assert!(result.is_ok());
 
             let mut collector = StubCollector { values: Vec::new() };
-            if let Schedule::Probes(probes) = result.unwrap() {
+            if let ProbeSchedule::Probes(probes) = result.unwrap() {
                 for probe in probes {
                     probe.run(&mut collector).unwrap();
                 }

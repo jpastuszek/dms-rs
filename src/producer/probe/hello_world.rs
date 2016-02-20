@@ -1,12 +1,15 @@
 use std::rc::Rc;
+use std::slice::Iter;
 use time::Duration;
 
 use sender::{Collect, Collector};
 use messaging::DataValue;
-use super::{ProbeRunMode, ProbeSchedule, Probe, Module};
+use super::{RunMode, RunPlan, Probe, Module};
 
 pub struct HelloWorldProbe;
-pub struct HelloWorldModule;
+pub struct HelloWorldModule<C> where C: Collect {
+    schedule: Vec<RunPlan<C>>
+}
 
 
 impl<C> Probe<C> for HelloWorldProbe where C: Collect {
@@ -22,28 +25,29 @@ impl<C> Probe<C> for HelloWorldProbe where C: Collect {
         Ok(())
     }
 
-    fn run_mode(&self) -> ProbeRunMode {
-        ProbeRunMode::SharedThread
+    fn run_mode(&self) -> RunMode {
+        RunMode::SharedThread
     }
 }
 
-impl<C> Module<C> for HelloWorldModule where C: Collect {
+impl<C> Module<C> for HelloWorldModule<C> where C: Collect {
     fn name(&self) -> &str {
         "hello world module"
     }
 
-    fn schedule(&self) -> Vec<ProbeSchedule<C>> {
-        vec![
-            ProbeSchedule {
-                every: Duration::milliseconds(1000),
-                probe: Rc::new(HelloWorldProbe)
-            }
-        ]
+    fn schedule(&self) -> Iter<RunPlan<C>> {
+        self.schedule.iter()
     }
 }
 
 pub fn init() -> Box<Module<Collector>> {
-    Box::new(HelloWorldModule)
+    Box::new(HelloWorldModule {
+        schedule: vec![
+            RunPlan {
+                every: Duration::milliseconds(1000),
+                probe: Rc::new(HelloWorldProbe)
+            }
+        ]
+    })
 }
-
 
