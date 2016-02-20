@@ -20,7 +20,7 @@ pub enum RunMode {
     //DedicatedProcess
 }
 
-pub struct RunPlan<C> where C: Collect {
+pub struct ProbeRunPlan<C> where C: Collect {
     every: Duration,
     probe: Rc<Probe<C>>
 }
@@ -33,7 +33,7 @@ pub trait Probe<C>: Send where C: Collect {
 
 pub trait Module<C> where C: Collect {
     fn name(&self) -> &str;
-    fn schedule(&self) -> Iter<RunPlan<C>>;
+    fn schedule(&self) -> Iter<ProbeRunPlan<C>>;
 }
 
 pub struct SharedThreadProbeRunner<C> where C: Collect {
@@ -56,7 +56,7 @@ impl<C> SharedThreadProbeRunner<C> where C: Collect {
     }
 }
 
-pub struct ProbeScheduler<C> where C: Collect + {
+pub struct ProbeScheduler<C> where C: Collect {
     scheduler: Scheduler<Rc<Probe<C>>, SteadyTimeSource>,
     overrun: u64,
     timer: Timer
@@ -81,6 +81,7 @@ impl Error for ProbeSchedulerError {
     }
 }
 
+//TODO: somehow move this to token_scheduler; some way to select on it - behave as IO?
 pub enum ProbeSchedule<C> where C: Collect {
     Wait(Stream<Alarm>),
     Probes(Vec<Rc<Probe<C>>>)
@@ -239,7 +240,7 @@ mod test {
 
     struct StubModule<C> where C: Collect {
         name: String,
-        schedule: Vec<RunPlan<C>>
+        schedule: Vec<ProbeRunPlan<C>>
     }
 
     struct StubProbe {
@@ -283,7 +284,7 @@ mod test {
 
         fn add_schedule(&mut self, every: Duration, probe: Rc<Probe<C>>) {
             self.schedule.push(
-                RunPlan {
+                ProbeRunPlan {
                     every: every,
                     probe: probe
                 }
@@ -296,7 +297,7 @@ mod test {
             &self.name
         }
 
-        fn schedule(&self) -> Iter<RunPlan<C>> {
+        fn schedule(&self) -> Iter<ProbeRunPlan<C>> {
             self.schedule.iter()
         }
     }

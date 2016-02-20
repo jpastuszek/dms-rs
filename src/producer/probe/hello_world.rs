@@ -4,11 +4,11 @@ use time::Duration;
 
 use sender::{Collect, Collector};
 use messaging::DataValue;
-use super::{RunMode, RunPlan, Probe, Module};
+use super::{RunMode, ProbeRunPlan, Probe, Module};
 
 pub struct HelloWorldProbe;
 pub struct HelloWorldModule<C> where C: Collect {
-    schedule: Vec<RunPlan<C>>
+    schedule: Vec<ProbeRunPlan<C>>
 }
 
 
@@ -35,7 +35,7 @@ impl<C> Module<C> for HelloWorldModule<C> where C: Collect {
         "hello world module"
     }
 
-    fn schedule(&self) -> Iter<RunPlan<C>> {
+    fn schedule(&self) -> Iter<ProbeRunPlan<C>> {
         self.schedule.iter()
     }
 }
@@ -43,7 +43,7 @@ impl<C> Module<C> for HelloWorldModule<C> where C: Collect {
 pub fn init() -> Box<Module<Collector>> {
     Box::new(HelloWorldModule {
         schedule: vec![
-            RunPlan {
+            ProbeRunPlan {
                 every: Duration::milliseconds(1000),
                 probe: Rc::new(HelloWorldProbe)
             }
