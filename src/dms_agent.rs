@@ -42,7 +42,6 @@ fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     Ok(())
 }
 
-//TODO: udpate nanomsg
 //TODO: update capnp
 //TODO: pass location arg to raw data points
 //TODO: set timestamp on raw data points to current batch

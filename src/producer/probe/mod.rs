@@ -66,7 +66,7 @@ impl<C> SharedThreadProbeExecutor<C> where C: Collect {
 
 pub struct ProbeScheduler<C> where C: Collect + {
     scheduler: Scheduler<Rc<Probe<C>>, SteadyTimeSource>,
-    missed: usize,
+    overrun: u64,
     timer: Timer
 }
 
@@ -94,7 +94,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
     pub fn new() -> ProbeScheduler<C> {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
-            missed: 0,
+            overrun: 0,
             timer: Timer::spawn()
         }
     }
@@ -108,11 +108,10 @@ impl<C> ProbeScheduler<C> where C: Collect {
     pub fn next(&mut self) -> Result<Schedule<C>, EmptySchedulerError> {
          match self.scheduler.next() {
              Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration))),
-             //TODO rename Missed to Overrun
-             Some(NextSchedule::Missed(probe_runs)) => {
-                 //TODO: log missed
-                 self.missed = self.missed + probe_runs.len();
-                 warn!("{} probes overrun their scheduled run time; overruns since start: {}", probe_runs.len(), self.missed);
+             Some(NextSchedule::Overrun(probe_runs)) => {
+                 //TODO: log overrun
+                 self.overrun = self.overrun + probe_runs.len() as u64;
+                 warn!("{} probes overrun their scheduled run time; overruns since start: {}", probe_runs.len(), self.overrun);
                  self.next()
              },
              Some(NextSchedule::Current(probes)) => {
@@ -123,8 +122,8 @@ impl<C> ProbeScheduler<C> where C: Collect {
     }
 
     #[allow(dead_code)]
-    pub fn missed(&self) -> usize {
-        self.missed
+    pub fn overrun(&self) -> u64 {
+        self.overrun
     }
 }
 
@@ -377,7 +376,7 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_next_should_count_missed_schedules() {
+    fn probe_scheduler_next_should_count_overrun_schedules() {
         use std::thread::sleep;
         use std::time::Duration as StdDuration;
 
@@ -414,7 +413,7 @@ mod test {
             ]);
         }
 
-        assert_eq!(ps.missed(), 2);
+        assert_eq!(ps.overrun(), 2);
     }
 
     #[test]
