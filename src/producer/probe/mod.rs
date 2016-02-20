@@ -71,17 +71,21 @@ pub struct ProbeScheduler<C> where C: Collect + {
 }
 
 #[derive(Debug)]
-struct EmptySchedulerError;
+enum ProbeSchedulerError {
+    Empty
+}
 
-impl fmt::Display for EmptySchedulerError {
+impl fmt::Display for ProbeSchedulerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "scheduler is empty")
+        match self {
+            &ProbeSchedulerError::Empty => write!(f, "{}: Scheduler is empty", self.description())
+        }
     }
 }
 
-impl Error for EmptySchedulerError {
+impl Error for ProbeSchedulerError {
     fn description(&self) -> &str {
-        "probe schedule error"
+        "Probe schedule error"
     }
 }
 
@@ -105,7 +109,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
         }
     }
 
-    pub fn next(&mut self) -> Result<Schedule<C>, EmptySchedulerError> {
+    pub fn next(&mut self) -> Result<Schedule<C>, ProbeSchedulerError> {
          match self.scheduler.next() {
              Some(NextSchedule::NextIn(duration)) => Ok(Schedule::Wait(self.timer.alarm_in(duration))),
              Some(NextSchedule::Overrun(probe_runs)) => {
@@ -117,7 +121,7 @@ impl<C> ProbeScheduler<C> where C: Collect {
              Some(NextSchedule::Current(probes)) => {
                  Ok(Schedule::Probes(probes))
              }
-             None => Err(EmptySchedulerError)
+             None => Err(ProbeSchedulerError::Empty)
          }
     }
 
