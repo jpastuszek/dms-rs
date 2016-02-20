@@ -20,44 +20,44 @@ pub enum RunMode {
     //DedicatedProcess
 }
 
-pub struct ProbeRunPlan<C> where C: Collect {
+pub struct ProbeRunPlan {
     every: Duration,
-    probe: Rc<Probe<C>>
+    probe: Rc<Probe>
 }
 
-pub trait Probe<C>: Send where C: Collect {
+pub trait Probe: Send {
     fn name(&self) -> &str;
-    fn run(&self, collector: &mut C) -> Result<(), String>;
+    fn run(&self, collector: &mut Collect) -> Result<(), String>;
     fn run_mode(&self) -> RunMode;
 }
 
-pub trait Module<C> where C: Collect {
+pub trait Module {
     fn name(&self) -> &str;
-    fn schedule(&self) -> Iter<ProbeRunPlan<C>>;
+    fn schedule(&self) -> Iter<ProbeRunPlan>;
 }
 
-pub struct SharedThreadProbeRunner<C> where C: Collect {
-    probes: Vec<Rc<Probe<C>>>
+pub struct SharedThreadProbeRunner {
+    probes: Vec<Rc<Probe>>
 }
 
-impl<C> SharedThreadProbeRunner<C> where C: Collect {
-    pub fn new() -> SharedThreadProbeRunner<C> {
+impl SharedThreadProbeRunner {
+    pub fn new() -> SharedThreadProbeRunner {
         SharedThreadProbeRunner {
             probes: Vec::new()
         }
     }
 
-    pub fn push(&mut self, probe: Rc<Probe<C>>) {
+    pub fn push(&mut self, probe: Rc<Probe>) {
         self.probes.push(probe);
     }
 
-    pub fn run(self, collector: &mut C) -> Vec<Result<(), String>> {
+    pub fn run(self, collector: &mut Collect) -> Vec<Result<(), String>> {
         self.probes.into_iter().map(|probe| probe.run(collector)).collect()
     }
 }
 
-pub struct ProbeScheduler<C> where C: Collect {
-    scheduler: Scheduler<Rc<Probe<C>>, SteadyTimeSource>,
+pub struct ProbeScheduler {
+    scheduler: Scheduler<Rc<Probe>, SteadyTimeSource>,
     overrun: u64,
     timer: Timer
 }
@@ -82,13 +82,13 @@ impl Error for ProbeSchedulerError {
 }
 
 //TODO: somehow move this to token_scheduler; some way to select on it - behave as IO?
-pub enum ProbeSchedule<C> where C: Collect {
+pub enum ProbeSchedule {
     Wait(Stream<Alarm>),
-    Probes(Vec<Rc<Probe<C>>>)
+    Probes(Vec<Rc<Probe>>)
 }
 
-impl<C> ProbeScheduler<C> where C: Collect {
-    pub fn new() -> ProbeScheduler<C> {
+impl ProbeScheduler {
+    pub fn new() -> ProbeScheduler {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
             overrun: 0,
@@ -96,13 +96,13 @@ impl<C> ProbeScheduler<C> where C: Collect {
         }
     }
 
-    pub fn schedule<'m>(&mut self, module: &'m Module<C>) {
+    pub fn schedule<'m>(&mut self, module: &'m Module) {
         for probe_schedule in module.schedule() {
             self.scheduler.every(probe_schedule.every, probe_schedule.probe.clone());
         }
     }
 
-    pub fn next(&mut self) -> Result<ProbeSchedule<C>, ProbeSchedulerError> {
+    pub fn next(&mut self) -> Result<ProbeSchedule, ProbeSchedulerError> {
          match self.scheduler.next() {
              Some(NextSchedule::NextIn(duration)) => Ok(ProbeSchedule::Wait(self.timer.alarm_in(duration))),
              Some(NextSchedule::Overrun(probe_runs)) => {
@@ -181,7 +181,7 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
     spawn(move || {
         let mut ps = ProbeScheduler::new();
 
-        let mut modules: Vec<Box<Module<Collector>>> = vec![];
+        let mut modules: Vec<Box<Module>> = vec![];
 
         modules.push(hello_world::init());
 
@@ -238,9 +238,9 @@ mod test {
     use std::slice::Iter;
     use std::rc::Rc;
 
-    struct StubModule<C> where C: Collect {
+    struct StubModule {
         name: String,
-        schedule: Vec<ProbeRunPlan<C>>
+        schedule: Vec<ProbeRunPlan>
     }
 
     struct StubProbe {
@@ -257,12 +257,12 @@ mod test {
         }
     }
 
-    impl<C> Probe<C> for StubProbe where C: Collect {
+    impl Probe for StubProbe {
         fn name(&self) -> &str {
             &self.name
         }
 
-        fn run(&self, collector: &mut C) -> Result<(), String> {
+        fn run(&self, collector: &mut Collect) -> Result<(), String> {
             let mut collector = collector;
             collector.collect("foo", &self.name, "c1", DataValue::Text(format!("{}-{}", self.name, "c1")));
             collector.collect("bar", &self.name, "c2", DataValue::Text(format!("{}-{}", self.name, "c2")));
@@ -274,15 +274,15 @@ mod test {
         }
     }
 
-    impl<C> StubModule<C> where C: Collect  {
-        fn new(name: &str) -> StubModule<C> {
+    impl StubModule {
+        fn new(name: &str) -> StubModule {
             StubModule {
                 name: name.to_string(),
                 schedule: Vec::new()
             }
         }
 
-        fn add_schedule(&mut self, every: Duration, probe: Rc<Probe<C>>) {
+        fn add_schedule(&mut self, every: Duration, probe: Rc<Probe>) {
             self.schedule.push(
                 ProbeRunPlan {
                     every: every,
@@ -292,12 +292,12 @@ mod test {
         }
     }
 
-    impl<C> Module<C> for StubModule<C> where C: Collect {
+    impl Module for StubModule {
         fn name(&self) -> &str {
             &self.name
         }
 
-        fn schedule(&self) -> Iter<ProbeRunPlan<C>> {
+        fn schedule(&self) -> Iter<ProbeRunPlan> {
             self.schedule.iter()
         }
     }
@@ -349,7 +349,7 @@ mod test {
         m2.add_schedule(Duration::milliseconds(200), StubProbe::new("m2-p2"));
 
 
-        let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
+        let mut ps: ProbeScheduler = ProbeScheduler::new();
         ps.schedule(&m1);
         ps.schedule(&m2);
 
@@ -385,7 +385,7 @@ mod test {
         let mut m2 = StubModule::new("m2");
         m2.add_schedule(Duration::milliseconds(200), StubProbe::new("m2-p1"));
 
-        let mut ps: ProbeScheduler<StubCollector> = ProbeScheduler::new();
+        let mut ps: ProbeScheduler = ProbeScheduler::new();
         ps.schedule(&m1);
         ps.schedule(&m2);
 

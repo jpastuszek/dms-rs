@@ -2,22 +2,22 @@ use std::rc::Rc;
 use std::slice::Iter;
 use time::Duration;
 
-use sender::{Collect, Collector};
+use sender::Collect;
 use messaging::DataValue;
 use super::{RunMode, ProbeRunPlan, Probe, Module};
 
 pub struct HelloWorldProbe;
-pub struct HelloWorldModule<C> where C: Collect {
-    schedule: Vec<ProbeRunPlan<C>>
+pub struct HelloWorldModule {
+    schedule: Vec<ProbeRunPlan>
 }
 
 
-impl<C> Probe<C> for HelloWorldProbe where C: Collect {
+impl Probe for HelloWorldProbe {
     fn name(&self) -> &str {
         "hello world probe"
     }
 
-    fn run(&self, collector: &mut C) -> Result<(), String> {
+    fn run(&self, collector: &mut Collect) -> Result<(), String> {
         let mut collector = collector;
         info!("Hello world!");
         collector.collect("hello", "foo", "c1", DataValue::Text("blah".to_string()));
@@ -30,17 +30,17 @@ impl<C> Probe<C> for HelloWorldProbe where C: Collect {
     }
 }
 
-impl<C> Module<C> for HelloWorldModule<C> where C: Collect {
+impl Module for HelloWorldModule {
     fn name(&self) -> &str {
         "hello world module"
     }
 
-    fn schedule(&self) -> Iter<ProbeRunPlan<C>> {
+    fn schedule(&self) -> Iter<ProbeRunPlan> {
         self.schedule.iter()
     }
 }
 
-pub fn init() -> Box<Module<Collector>> {
+pub fn init() -> Box<Module> {
     Box::new(HelloWorldModule {
         schedule: vec![
             ProbeRunPlan {
