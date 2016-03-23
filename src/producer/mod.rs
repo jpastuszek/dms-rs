@@ -1,19 +1,20 @@
-use carboxyl::Sink;
-
+use std::sync::mpsc::channel;
 use sender::Collector;
 
 #[derive(Clone)]
 pub enum ProducerEvent {
-    Shutdown
+    Hello
 }
 
 mod probe;
 
 pub fn start(collector: Collector) -> () {
-    //TODO: shutdown trigger somehow
-    let event_sink = Sink::new();
+    let (probe_notify, events) = channel();
 
-    let probe = probe::start(collector.clone(), event_sink.stream());
+    let probe = probe::start(collector.clone(), events);
+
+    probe_notify.send(ProducerEvent::Hello).expect("probe thread died");
+
     probe.join().unwrap();
 }
 

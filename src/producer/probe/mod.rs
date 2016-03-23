@@ -1,14 +1,11 @@
 use std::slice::Iter;
-use std::sync::mpsc::{channel, Sender};
 use std::thread::{spawn, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
-use std::thread::sleep;
-use std::time::Duration as StdDuration;
 use time::Duration;
-use token_scheduler::{Scheduler, Schedule as NextSchedule, SteadyTimeSource};
-use carboxyl::{Sink, Stream};
+use std::sync::mpsc::{Receiver, RecvError};
+use token_scheduler::{Scheduler, Abort, AbortableWait, AbortableWaitError, SteadyTimeSource};
 
 use sender::{Collect, Collector};
 use producer::ProducerEvent;
@@ -58,19 +55,20 @@ impl SharedThreadProbeRunner {
 
 pub struct ProbeScheduler {
     scheduler: Scheduler<Rc<Probe>, SteadyTimeSource>,
-    overrun: u64,
-    timer: Timer
+    overrun: u64
 }
 
 #[derive(Debug)]
 enum ProbeSchedulerError {
-    Empty
+    Empty,
+    Aborted
 }
 
 impl fmt::Display for ProbeSchedulerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            &ProbeSchedulerError::Empty => write!(f, "{}: Scheduler is empty", self.description())
+            &ProbeSchedulerError::Empty => write!(f, "{}: Scheduler is empty", self.description()),
+            &ProbeSchedulerError::Aborted => write!(f, "{}: Scheduler wait has been aborted", self.description())
         }
     }
 }
@@ -81,18 +79,11 @@ impl Error for ProbeSchedulerError {
     }
 }
 
-//TODO: somehow move this to token_scheduler; some way to select on it - behave as IO?
-pub enum ProbeSchedule {
-    Wait(Stream<Alarm>),
-    Probes(Vec<Rc<Probe>>)
-}
-
 impl ProbeScheduler {
     pub fn new() -> ProbeScheduler {
         ProbeScheduler {
             scheduler: Scheduler::new(Duration::milliseconds(100)),
-            overrun: 0,
-            timer: Timer::spawn()
+            overrun: 0
         }
     }
 
@@ -102,19 +93,23 @@ impl ProbeScheduler {
         }
     }
 
-    pub fn next(&mut self) -> Result<ProbeSchedule, ProbeSchedulerError> {
-         match self.scheduler.next() {
-             Some(NextSchedule::NextIn(duration)) => Ok(ProbeSchedule::Wait(self.timer.alarm_in(duration))),
-             Some(NextSchedule::Overrun(probe_runs)) => {
-                 //TODO: log overrun
+    pub fn abort_handle(&self) -> <SteadyTimeSource as AbortableWait>::AbortHandle {
+        self.scheduler.abort_handle()
+    }
+
+    pub fn abortable_wait(&mut self) -> Result<Vec<Rc<Probe>>, ProbeSchedulerError> {
+         match self.scheduler.abortable_wait() {
+             Err(AbortableWaitError::Overrun(probe_runs)) => {
+                 //TODO: trace each overrun
                  self.overrun = self.overrun + probe_runs.len() as u64;
                  warn!("{} probes overrun their scheduled run time; overruns since start: {}", probe_runs.len(), self.overrun);
-                 self.next()
+                 self.abortable_wait()
              },
-             Some(NextSchedule::Current(probes)) => {
-                 Ok(ProbeSchedule::Probes(probes))
+             Err(AbortableWaitError::Empty) => Err(ProbeSchedulerError::Empty),
+             Err(AbortableWaitError::Aborted) => Err(ProbeSchedulerError::Aborted),
+             Ok(probes) => {
+                 Ok(probes)
              }
-             None => Err(ProbeSchedulerError::Empty)
          }
     }
 
@@ -124,60 +119,9 @@ impl ProbeScheduler {
     }
 }
 
-struct Timer {
-    task_send: Sender<(Sink<Alarm>, Duration)>
-}
-
-#[derive(Clone)]
-struct Alarm;
-
-unsafe impl Sync for Alarm {}
-unsafe impl Send for Alarm {}
-
-impl Timer {
-    fn spawn() -> Timer {
-        let (task_send,  task_recv) = channel();
-
-        spawn(move || {
-            loop {
-                match task_recv.recv() {
-                    Ok((alarm_sink, duration)) => {
-                        let duration: Duration = duration;
-                        let alarm_sink: Sink<Alarm> = alarm_sink;
-
-                        sleep(StdDuration::new(
-                            duration.num_seconds() as u64,
-                            (duration.num_nanoseconds().expect("sleep duration too large") - duration.num_seconds() * 1_000_000_000) as u32
-                        ));
-                        alarm_sink.send(Alarm);
-                    }
-                    Err(_) => return // client gone
-                }
-            }
-        });
-
-        Timer {
-            task_send: task_send
-        }
-    }
-
-    fn alarm_in(&self, duration: Duration) -> Stream<Alarm> {
-        let alarm_sink = Sink::new();
-        let alarm_stream = alarm_sink.stream();
-        self.task_send.send((alarm_sink, duration)).expect("Timer tread died!");
-        alarm_stream
-    }
-}
-
-#[derive(Clone)]
-enum ProbeLoopEvents {
-    ProducerEvent(ProducerEvent),
-    Timer(Alarm)
-}
-
 mod hello_world;
 
-pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<()> {
+pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandle<()> {
     spawn(move || {
         let mut ps = ProbeScheduler::new();
 
@@ -191,16 +135,30 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
 
         //TODO: load modules
         //TODO: schedule modules
-        //TODO: need a way to stop the thread
-        // 1 use park_timeout as slee funciton and check some mutex or channel if we were asekd to
-        //   exit - this requires collector to send message or rais signal and then unpark
-        // 2 use Condvar with wait_timeout
-        // 3 use separate thread that will sleep and notify on channel when done - select on event
-        //   and it and use it to wait https://github.com/PeterReid/schedule_recv
+
+        let abort_handle = ps.abort_handle();
+
+        spawn(move || {
+            loop {
+                match events.recv() {
+                    Ok(ProducerEvent::Hello) => debug!("hello received"),
+                    Err(RecvError) => {
+                        info!("Aborting scheduler and shutting down");
+                        abort_handle.abort();
+                        return
+                    }
+                }
+            }
+        });
 
         loop {
-            match ps.next().expect("no probes configured to run") {
-                ProbeSchedule::Probes(probes) => {
+            match ps.abortable_wait() {
+                Err(ProbeSchedulerError::Empty) => panic!("no probes configured to run"), //TODO: stop with nice msg
+                Err(ProbeSchedulerError::Aborted) => {
+                    info!("Scheduler aborted; exiting");
+                    return
+                }
+                Ok(probes) => {
                     let mut run_collector = collector.clone();
                     let mut shared_exec = SharedThreadProbeRunner::new();
 
@@ -212,16 +170,6 @@ pub fn start(collector: Collector, events: Stream<ProducerEvent>) -> JoinHandle<
 
                     for error in shared_exec.run(&mut run_collector).into_iter().filter(|r| r.is_err()).map(|r| r.unwrap_err()) {
                         error!("Probe reported an error: {}", error);
-                    }
-                }
-                ProbeSchedule::Wait(alarms) => {
-                    for event in events.map(|ce| ProbeLoopEvents::ProducerEvent(ce))
-                        .merge(&alarms.map(|a| ProbeLoopEvents::Timer(a)))
-                        .events() {
-                        match event {
-                            ProbeLoopEvents::ProducerEvent(ProducerEvent::Shutdown) => return,
-                            ProbeLoopEvents::Timer(_) => break
-                        }
                     }
                 }
             }
@@ -340,7 +288,7 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_next_should_provide_porbes_according_to_schedule() {
+    fn probe_scheduler_abortable_wait_should_provide_porbes_according_to_schedule() {
         let mut m1 = StubModule::new("m1");
         m1.add_schedule(Duration::milliseconds(100), StubProbe::new("m1-p1"));
 
@@ -354,17 +302,9 @@ mod test {
         ps.schedule(&m2);
 
         let mut collector = StubCollector { values: Vec::new() };
-        if let ProbeSchedule::Wait(stream) = ps.next().unwrap() {
-            stream.events().next();
-        } else {
-            panic!("expected need to wait");
-        }
-        if let ProbeSchedule::Probes(probes) = ps.next().unwrap() {
-            for probe in probes {
-                probe.run(&mut collector).unwrap();
-            }
-        } else {
-            panic!("expected probes");
+        let probes = ps.abortable_wait().unwrap();
+        for probe in probes {
+            probe.run(&mut collector).unwrap();
         }
 
         assert_eq!(collector.text_values(), vec![
@@ -374,7 +314,7 @@ mod test {
     }
 
     #[test]
-    fn probe_scheduler_next_should_count_overrun_schedules() {
+    fn probe_scheduler_abortable_wait_should_count_overrun_schedules() {
         use std::thread::sleep;
         use std::time::Duration as StdDuration;
 
@@ -392,16 +332,13 @@ mod test {
         sleep(StdDuration::from_millis(200));
 
         {
-            let result = ps.next();
+            let result = ps.abortable_wait();
             assert!(result.is_ok());
 
             let mut collector = StubCollector { values: Vec::new() };
-            if let ProbeSchedule::Probes(probes) = result.unwrap() {
-                for probe in probes {
-                    probe.run(&mut collector).unwrap();
-                }
-            } else {
-                panic!("expected probes");
+            let probes = result.unwrap();
+            for probe in probes {
+                probe.run(&mut collector).unwrap();
             }
 
             assert_eq!(collector.text_values(), vec![
@@ -412,15 +349,6 @@ mod test {
         }
 
         assert_eq!(ps.overrun(), 2);
-    }
-
-    #[test]
-    fn timer() {
-        use super::Timer;
-
-        let timer = Timer::spawn();
-        assert!(timer.alarm_in(Duration::milliseconds(10)).events().next().is_some());
-        assert!(timer.alarm_in(Duration::milliseconds(10)).events().next().is_some());
     }
 }
 

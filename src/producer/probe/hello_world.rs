@@ -11,7 +11,6 @@ pub struct HelloWorldModule {
     schedule: Vec<ProbeRunPlan>
 }
 
-
 impl Probe for HelloWorldProbe {
     fn name(&self) -> &str {
         "hello world probe"
