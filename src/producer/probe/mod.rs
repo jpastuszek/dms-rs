@@ -180,6 +180,7 @@ pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandl
 #[cfg(test)]
 mod test {
     use super::*;
+    use super::ProbeSchedulerError;
     use sender::Collect;
     use messaging::DataValue;
     use time::Duration;
@@ -349,6 +350,33 @@ mod test {
         }
 
         assert_eq!(ps.overrun(), 2);
+    }
+
+    #[test]
+    fn probe_scheduler_abortable_wait_should_return_abort_on_abort() {
+        use std::thread::{spawn, sleep};
+        use std::time::Duration as StdDuration;
+        use token_scheduler::{Abort, AbortableWait};
+
+        let mut m1 = StubModule::new("m1");
+        m1.add_schedule(Duration::milliseconds(1000), StubProbe::new("m1-p1"));
+        m1.add_schedule(Duration::milliseconds(1000), StubProbe::new("m1-p2"));
+
+        let mut ps: ProbeScheduler = ProbeScheduler::new();
+        let abort_handle = ps.abort_handle();
+
+        ps.schedule(&m1);
+
+        spawn(move || {
+            sleep(StdDuration::from_millis(100));
+            abort_handle.abort();
+        });
+
+        if let Err(ProbeSchedulerError::Aborted) = ps.abortable_wait() {
+            // OK
+        } else {
+            panic!("expected scheduler to be aborted")
+        }
     }
 }
 
