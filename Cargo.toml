@@ -20,7 +20,7 @@ chrono = "*"
 time = "~0.1"
 capnp = "*"
 capnpc = "*"
-carboxyl = "0.1.2"
+chan-signal = "0.1.5"
 url = "0.5.5"
 token_scheduler = { path = "../token_scheduler" }
 

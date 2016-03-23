@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
 use time::Duration;
-use std::sync::mpsc::{Receiver, RecvError};
+use std::sync::mpsc::Receiver;
 use token_scheduler::{Scheduler, Abort, AbortableWait, AbortableWaitError, SteadyTimeSource};
 
 use sender::{Collect, Collector};
@@ -140,10 +140,10 @@ pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandl
 
         spawn(move || {
             loop {
-                match events.recv() {
-                    Ok(ProducerEvent::Hello) => debug!("hello received"),
-                    Err(RecvError) => {
-                        info!("Aborting scheduler and shutting down");
+                match events.recv().expect("master thread died") {
+                    ProducerEvent::Hello => debug!("hello received"),
+                    ProducerEvent::Shutdown => {
+                        info!("Shutting down probe module: aborting scheduler");
                         abort_handle.abort();
                         return
                     }

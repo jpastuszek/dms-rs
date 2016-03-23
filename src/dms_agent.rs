@@ -7,7 +7,7 @@ extern crate time;
 extern crate chrono; // ?
 extern crate nanomsg;
 extern crate url;
-extern crate carboxyl;
+extern crate chan_signal;
 
 extern crate capnp;
 extern crate capnpc;
