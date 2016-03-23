@@ -17,6 +17,8 @@ extern crate token_scheduler;
 use std::str::FromStr;
 use clap::{App, Arg};
 use url::Url;
+use std::sync::mpsc::channel;
+use chan_signal::Signal;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
@@ -32,13 +34,26 @@ mod producer;
 use sender::Sender;
 
 fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
+    //NOTE: this has to be called before any thread is spawned
+    let signals = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
     //TODO: don't panic on wrong processor address + shutdown correctly
     let sender = Sender::spawn(url.to_owned()).unwrap();
 
     let collector = sender.collector();
+    let (producer_notify, producer_signals) = channel();
+    let producer = producer::start(collector, producer_signals);
 
-    producer::start(collector);
+    debug!("Waiting for signals...");
+    let signal = signals.recv().expect("chan_signal thread died");
+    debug!("Process received signal: {:?}", signal);
 
+    producer_notify.send(signal).expect("producer thread died");
+    //NOTE: assuming shutdown on any signal
+    //TODO: timeout?
+    producer.join().ok();
+
+    info!("Exiting cleanly");
     Ok(())
 }
 

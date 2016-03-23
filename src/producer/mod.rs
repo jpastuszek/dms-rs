@@ -1,6 +1,7 @@
-use std::sync::mpsc::channel;
+use std::thread::{spawn, JoinHandle};
+use std::sync::mpsc::{channel, Receiver};
+use chan_signal::Signal;
 use sender::Collector;
-use chan_signal::{self, Signal};
 
 #[derive(Clone)]
 pub enum ProducerEvent {
@@ -10,21 +11,20 @@ pub enum ProducerEvent {
 
 mod probe;
 
-pub fn start(collector: Collector) -> () {
-    //TODO: move to main prog?
-    //TODO: does not work on MacOS? does it work at all?
-    let signals = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+pub fn start(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> {
+    spawn(move || {
+        let (probe_notify, probe_events) = channel();
+        let probe = probe::start(collector.clone(), probe_events);
+        probe_notify.send(ProducerEvent::Hello).expect("probe thread died");
 
-    let (probe_notify, events) = channel();
-    let probe = probe::start(collector.clone(), events);
-    probe_notify.send(ProducerEvent::Hello).expect("probe thread died");
+        let signal = signals.recv().expect("main thread died");
 
-    info!("Waiting for signals...");
-    let signal = signals.recv().expect("chan_signal thread died");
+        info!("Received signal: {:?}: shutting down...", signal);
+        probe_notify.send(ProducerEvent::Shutdown).ok();
 
-    info!("Received signal: {:?}; shutting down", signal);
-    probe_notify.send(ProducerEvent::Shutdown).ok();
+        probe.join().ok();
 
-    probe.join().unwrap();
+        info!("Producer done");
+    })
 }
 

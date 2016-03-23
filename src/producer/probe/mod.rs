@@ -155,7 +155,7 @@ pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandl
             match ps.abortable_wait() {
                 Err(ProbeSchedulerError::Empty) => panic!("no probes configured to run"), //TODO: stop with nice msg
                 Err(ProbeSchedulerError::Aborted) => {
-                    info!("Scheduler aborted; exiting");
+                    info!("Probe module done");
                     return
                 }
                 Ok(probes) => {
