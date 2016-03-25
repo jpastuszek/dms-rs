@@ -1,4 +1,4 @@
-use std::thread::{spawn, JoinHandle};
+use std::thread::{self, JoinHandle};
 use std::sync::mpsc::{channel, Receiver};
 use chan_signal::Signal;
 use sender::Collector;
@@ -11,8 +11,8 @@ pub enum ProducerEvent {
 
 mod probe;
 
-pub fn start(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> {
-    spawn(move || {
+pub fn spawn(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> {
+    thread::spawn(move || {
         let (probe_notify, probe_events) = channel();
         let probe = probe::start(collector.clone(), probe_events);
         probe_notify.send(ProducerEvent::Hello).expect("probe thread died");
@@ -22,7 +22,7 @@ pub fn start(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> 
         info!("Received signal: {:?}: shutting down...", signal);
         probe_notify.send(ProducerEvent::Shutdown).ok();
 
-        probe.join().ok();
+        probe.join().unwrap();
 
         info!("Producer done");
     })

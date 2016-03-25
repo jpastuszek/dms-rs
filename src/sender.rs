@@ -1,4 +1,4 @@
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::error::Error;
@@ -56,7 +56,8 @@ impl fmt::Display for SenderError {
 }
 
 pub struct Sender {
-    sink: SyncSender<Box<RawDataPoint>>
+    sink: SyncSender<Box<RawDataPoint>>,
+    thread: JoinHandle<()>
 }
 
 impl Sender {
@@ -64,9 +65,10 @@ impl Sender {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let mut socket = try!(Socket::new(Protocol::Push));
+        info!("Using processor URL: {}", &processor_url);
         let mut _endpoint = try!(socket.connect(&processor_url.serialize()[..]));
 
-        let _ = thread::spawn(move || {
+        let thread = thread::spawn(move || {
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
@@ -75,7 +77,7 @@ impl Sender {
                         }
                     },
                     Err(error) => {
-                        info!("Collector thread finished: {}", error);
+                        info!("Sender thread finished: {}", error);
                         return;
                     }
                 }
@@ -83,8 +85,17 @@ impl Sender {
         });
 
         Ok(Sender {
-            sink: tx
+            sink: tx,
+            thread: thread
         })
+    }
+
+    pub fn stop(self) {
+        let Sender {sink, thread} = self;
+        info!("Stopping sender...");
+        drop(sink);
+        thread.join().unwrap();
+        info!("Sender done");
     }
 
     pub fn collector(&self) -> Collector {

@@ -7,6 +7,7 @@ extern crate time;
 extern crate chrono; // ?
 extern crate nanomsg;
 extern crate url;
+extern crate chan;
 extern crate chan_signal;
 
 extern crate capnp;
@@ -15,9 +16,10 @@ extern crate capnpc;
 extern crate token_scheduler;
 
 use std::str::FromStr;
+use std::sync::mpsc::channel;
+use chan::Receiver;
 use clap::{App, Arg};
 use url::Url;
-use std::sync::mpsc::channel;
 use chan_signal::Signal;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
@@ -33,16 +35,13 @@ mod producer;
 
 use sender::Sender;
 
-fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
-    //NOTE: this has to be called before any thread is spawned
-    let signals = chan_signal::notify(&[Signal::INT, Signal::TERM]);
-
+fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (String, i32)> {
     //TODO: don't panic on wrong processor address + shutdown correctly
-    let sender = Sender::spawn(url.to_owned()).unwrap();
+    let sender = Sender::spawn(processor_url.to_owned()).unwrap();
 
     let collector = sender.collector();
     let (producer_notify, producer_signals) = channel();
-    let producer = producer::start(collector, producer_signals);
+    let producer = producer::spawn(collector, producer_signals);
 
     debug!("Waiting for signals...");
     let signal = signals.recv().expect("chan_signal thread died");
@@ -51,7 +50,9 @@ fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
     producer_notify.send(signal).expect("producer thread died");
     //NOTE: assuming shutdown on any signal
     //TODO: timeout?
-    producer.join().ok();
+    producer.join().unwrap();
+
+    sender.stop();
 
     info!("Exiting cleanly");
     Ok(())
@@ -61,6 +62,10 @@ fn dms_agent(url: &Url) -> Result<(), (String, i32)> {
 //TODO: pass location arg to raw data points
 //TODO: set timestamp on raw data points to current batch
 fn main() {
+    //TODO: move to own function; return channel from std with custom signals (shutdown, reload)
+    //NOTE: this has to be called before any thread is spawned
+    let signals = chan_signal::notify(&[Signal::INT, Signal::TERM]);
+
     let args = App::new("Distributed Monitoring System Agent")
         .version(crate_version!())
         .author("Jakub Pastuszek <jpastuszek@whatclinic.com>")
@@ -81,12 +86,12 @@ fn main() {
 
     program::init(Some(args.value_of("log-spec").unwrap_or("info")));
 
-    let url = value_t!(args, "processor-url", Url).unwrap_or_else(|err|
+    let processor_url = value_t!(args, "processor-url", Url).unwrap_or_else(|err|
         match err.kind {
             clap::ErrorKind::ArgumentNotFound => FromStr::from_str("ipc:///tmp/rdms_data_store.ipc").unwrap(),
             _ => err.exit()
         }
     );
 
-    dms_agent(&url).unwrap_or_else(|(err, code)| program::exit_with_error(err, code));
+    dms_agent(&signals, &processor_url).unwrap_or_else(|(err, code)| program::exit_with_error(err, code));
 }
