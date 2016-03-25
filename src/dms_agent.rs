@@ -43,23 +43,21 @@ fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (Str
     let producer = producer::spawn(collector, producer_signals);
 
     loop {
-        match signals.recv().expect("signal listener died") {
-            signal @ Signal::Shutdown => {
+        match signals.recv() {
+            Ok(signal @ Signal::Reload) => {
                 producer_signal.send(signal).expect("producer thread died");
-                //TODO: timeout?
-                producer.join().unwrap();
+            }
+            Err(_) => {
+                drop(producer_signal);
+                producer.join().ok();
 
                 //TODO: gets stuck on sending
                 sender.stop();
-
-                info!("Exiting cleanly");
-                return Ok(());
-            }
-            signal @ Signal::Reload => {
-                producer_signal.send(signal).expect("producer thread died");
+                break
             }
         }
     }
+    Ok(())
 }
 
 //TODO: update capnp
@@ -95,4 +93,6 @@ fn main() {
     );
 
     dms_agent(&signals, &processor_url).unwrap_or_else(|(err, code)| program::exit_with_error(err, code));
+
+    info!("Exiting cleanly");
 }

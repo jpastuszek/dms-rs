@@ -10,12 +10,19 @@ pub fn spawn(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> 
         let (probe_signal, probe_signals) = channel();
         let probe = probe::spawn(probe_signals, collector.clone());
 
-        let signal = signals.recv().expect("main thread died");
-
-        info!("Received signal: {:?}", signal);
-
-        probe_signal.send(signal).unwrap();
-        probe.join().unwrap();
+        loop {
+            match signals.recv() {
+                Ok(signal) => {
+                    info!("Received signal: {:?}", signal);
+                    probe_signal.send(signal).expect("probe module died");
+                }
+                Err(_) => {
+                    drop(probe_signal);
+                    probe.join().ok();
+                    break
+                }
+            }
+        }
 
         info!("Producer done");
     })

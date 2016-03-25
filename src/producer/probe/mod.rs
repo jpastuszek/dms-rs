@@ -139,30 +139,35 @@ pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> 
         let abort_handle = ps.abort_handle();
         let (signal_forward, signals_forward) = channel();
 
-        thread::spawn(move || {
+        let signal_handler = thread::spawn(move || {
             loop {
-                if signals.recv().ok().and_then(|signal| {
-                    debug!("Probe module: got signal {:?}", signal);
-                    signal_forward.send(signal).ok()
-                }).is_some() {
-                    abort_handle.abort()
-                } else {
-                    debug!("Stopping probe module signal handler");
-                    return
+                match signals.recv() {
+                    Ok(signal) => {
+                        debug!("Probe module: got signal {:?}", signal);
+                        signal_forward.send(signal).expect("Probe module died");
+                        abort_handle.abort();
+                    }
+                    Err(_) => {
+                        drop(signal_forward);
+                        abort_handle.abort();
+                        break
+                    }
                 }
             }
+
+            debug!("Probe module signal handler done");
         });
 
         loop {
             match ps.abortable_wait() {
                 Err(ProbeSchedulerError::Empty) => panic!("no probes configured to run"), //TODO: stop with nice msg
                 Err(ProbeSchedulerError::Aborted) => {
-                    match signals_forward.try_recv().expect("aborted byt no signal forwarded") {
-                        Signal::Shutdown => {
-                                info!("Probe module done");
-                                return
+                    match signals_forward.recv() {
+                        Ok(Signal::Reload) => panic!("Reload is unsupported"),
+                        Err(_) => {
+                            signal_handler.join().ok();
+                            break
                         }
-                        Signal::Reload => panic!("Reload is unsupported")
                     }
                 }
                 Ok(probes) => {
@@ -181,6 +186,8 @@ pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> 
                 }
             }
         }
+
+        info!("Probe module done");
     })
 }
 

@@ -97,7 +97,7 @@ impl Sender {
         info!("Stopping sender...");
         //NOTE: all collectors needs to be dropped as well before thread will join
         drop(sink);
-        thread.join().unwrap();
+        thread.join().ok();
         info!("Sender done");
     }
 

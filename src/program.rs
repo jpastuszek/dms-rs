@@ -19,7 +19,6 @@ fn app_format(record: &LogRecord) -> String {
 
 #[derive(Clone, Debug)]
 pub enum Signal {
-    Shutdown,
     Reload
 }
 
@@ -38,11 +37,10 @@ pub fn init<S: Into<String>>(spec: Option<S>) -> Receiver<Signal> {
         loop {
             let sig = chan_signals.recv().expect("chan_signal thread died");
             info!("Process received OS signal: {:?}", sig);
-
             signal.send(match sig {
                 Sig::HUP => Signal::Reload,
-                _ => Signal::Shutdown
-            }).ok();
+                _ => return
+            }).expect("main thread died?!");
         }
     });
 
