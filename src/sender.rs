@@ -1,4 +1,3 @@
-use std::thread::{self, JoinHandle};
 use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::error::Error;
@@ -8,6 +7,7 @@ use nanomsg::{Socket, Protocol, Error as NanoError};
 use url::Url;
 use chrono::{DateTime, UTC};
 
+use program::{self, JoinHandle};
 use messaging::*;
 
 #[derive(Debug)]
@@ -70,7 +70,7 @@ impl Sender {
         info!("Using processor URL: {}", &processor_url);
         let mut _endpoint = try!(socket.connect(&processor_url.serialize()[..]));
 
-        let thread = thread::spawn(move || {
+        let thread = program::spawn("sender", move || {
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {

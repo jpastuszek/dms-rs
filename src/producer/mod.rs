@@ -1,12 +1,11 @@
-use std::thread::{self, JoinHandle};
 use std::sync::mpsc::{channel, Receiver};
-use program::Signal;
+use program::{self, JoinHandle, Signal};
 use sender::Collector;
 
 mod probe;
 
 pub fn spawn(collector: Collector, signals: Receiver<Signal>) -> JoinHandle<()> {
-    thread::spawn(move || {
+    program::spawn("producer", move || {
         let (probe_signal, probe_signals) = channel();
         let probe = probe::spawn(probe_signals, collector.clone());
 

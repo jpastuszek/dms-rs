@@ -1,6 +1,7 @@
 use std::process::exit;
 use std::sync::mpsc::{channel, Receiver};
 use std::thread;
+pub use std::thread::JoinHandle;
 use flexi_logger::{init as log_init, LogConfig, LogRecord};
 use time;
 use chan_signal::{notify, Signal as Sig};
@@ -51,3 +52,8 @@ pub fn exit_with_error(msg: String, code: i32) -> ! {
     error!("Exiting: {}", msg);
     exit(code);
 }
+
+pub fn spawn<F, T>(name: &str, f: F) -> JoinHandle<T> where F: FnOnce() -> T, F: Send + 'static, T: Send + 'static {
+    thread::Builder::new().name(name.to_string()).spawn(f).expect("failed to spawn program thread")
+}
+

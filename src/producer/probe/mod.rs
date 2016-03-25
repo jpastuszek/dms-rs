@@ -1,5 +1,4 @@
 use std::slice::Iter;
-use std::thread::{self, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
@@ -7,8 +6,8 @@ use std::sync::mpsc::{channel, Receiver};
 use time::Duration;
 use token_scheduler::{Scheduler, Abort, AbortableWait, AbortableWaitError, SteadyTimeSource};
 
+use program::{self, JoinHandle, Signal};
 use sender::{Collect, Collector};
-use program::Signal;
 
 #[allow(dead_code)]
 pub enum RunMode {
@@ -122,7 +121,7 @@ impl ProbeScheduler {
 mod hello_world;
 
 pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> {
-    thread::spawn(move || {
+    program::spawn("producer/probe", move || {
         let mut ps = ProbeScheduler::new();
 
         let mut modules: Vec<Box<Module>> = vec![];
@@ -139,7 +138,7 @@ pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> 
         let abort_handle = ps.abort_handle();
         let (signal_forward, signals_forward) = channel();
 
-        let signal_handler = thread::spawn(move || {
+        let signal_handler = program::spawn("producer/probe/signal_handler", move || {
             loop {
                 match signals.recv() {
                     Ok(signal) => {
