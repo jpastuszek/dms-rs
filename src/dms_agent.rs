@@ -16,11 +16,9 @@ extern crate capnpc;
 extern crate token_scheduler;
 
 use std::str::FromStr;
-use std::sync::mpsc::channel;
-use chan::Receiver;
+use std::sync::mpsc::{channel, Receiver};
 use clap::{App, Arg};
 use url::Url;
-use chan_signal::Signal;
 
 // this needs to be in root module, see: https://github.com/dwrensha/capnproto-rust/issues/16
 #[allow(dead_code)]
@@ -33,6 +31,7 @@ mod messaging;
 mod sender;
 mod producer;
 
+use program::Signal;
 use sender::Sender;
 
 fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (String, i32)> {
@@ -40,21 +39,23 @@ fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (Str
     let sender = Sender::spawn(processor_url.to_owned()).unwrap();
 
     let collector = sender.collector();
-    let (producer_notify, producer_signals) = channel();
+    let (producer_signal, producer_signals) = channel();
     let producer = producer::spawn(collector, producer_signals);
 
-    debug!("Waiting for signals...");
-    let signal = signals.recv().expect("chan_signal thread died");
-    debug!("Process received signal: {:?}", signal);
+    match signals.recv().unwrap() {
+        signal @ Signal::Shutdown => {
+            producer_signal.send(signal).expect("producer thread died");
+            //TODO: timeout?
+            producer.join().unwrap();
 
-    producer_notify.send(signal).expect("producer thread died");
-    //NOTE: assuming shutdown on any signal
-    //TODO: timeout?
-    producer.join().unwrap();
+            //TODO: gets stuck on sending
+            sender.stop();
 
-    sender.stop();
+            info!("Exiting cleanly");
+        }
+        Signal::Reload => panic!("Reload is unsupported yet")
+    }
 
-    info!("Exiting cleanly");
     Ok(())
 }
 
@@ -62,9 +63,6 @@ fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (Str
 //TODO: pass location arg to raw data points
 //TODO: set timestamp on raw data points to current batch
 fn main() {
-    //TODO: move to own function; return channel from std with custom signals (shutdown, reload)
-    //NOTE: this has to be called before any thread is spawned
-    let signals = chan_signal::notify(&[Signal::INT, Signal::TERM]);
 
     let args = App::new("Distributed Monitoring System Agent")
         .version(crate_version!())
@@ -84,7 +82,7 @@ fn main() {
              .takes_value(true))
         .get_matches();
 
-    program::init(Some(args.value_of("log-spec").unwrap_or("info")));
+    let signals = program::init(Some(args.value_of("log-spec").unwrap_or("info")));
 
     let processor_url = value_t!(args, "processor-url", Url).unwrap_or_else(|err|
         match err.kind {

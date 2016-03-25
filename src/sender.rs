@@ -62,6 +62,8 @@ pub struct Sender {
 
 impl Sender {
     pub fn spawn(processor_url: Url) -> Result<Sender, SenderError> {
+        //NOTE: when channel gets full producers will get stuck on sending and we won't be able to
+        //shut down
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let mut socket = try!(Socket::new(Protocol::Push));
@@ -93,6 +95,7 @@ impl Sender {
     pub fn stop(self) {
         let Sender {sink, thread} = self;
         info!("Stopping sender...");
+        //NOTE: all collectors needs to be dropped as well before thread will join
         drop(sink);
         thread.join().unwrap();
         info!("Sender done");

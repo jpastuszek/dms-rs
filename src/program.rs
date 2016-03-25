@@ -1,6 +1,9 @@
+use std::process::exit;
+use std::sync::mpsc::{channel, Receiver};
+use std::thread::{self, JoinHandle};
 use flexi_logger::{init as log_init, LogConfig, LogRecord};
 use time;
-use std::process::exit;
+use chan_signal::{notify, Signal as Sig};
 
 fn app_format(record: &LogRecord) -> String {
     //2016-02-09 10:20:15,784 [myprog] INFO  src/myprog.rs - Processing update events
@@ -14,10 +17,34 @@ fn app_format(record: &LogRecord) -> String {
              &record.args())
 }
 
-pub fn init<S: Into<String>>(spec: Option<S>) {
+#[derive(Clone, Debug)]
+pub enum Signal {
+    Shutdown,
+    Reload
+}
+
+pub fn init<S: Into<String>>(spec: Option<S>) -> Receiver<Signal> {
+    //NOTE: this has to be called before any thread is spawned
+    let chan_signals = notify(&[Sig::INT, Sig::TERM, Sig::HUP]);
+
     let mut log_config = LogConfig::new();
     log_config.format = app_format;
     log_init(log_config, spec.map(|s| s.into())).unwrap();
+
+    let (signal, signals) = channel();
+
+    let _ = thread::spawn(move || {
+        debug!("Waiting for signals...");
+        let sig = chan_signals.recv().expect("chan_signal thread died");
+        info!("Process received OS signal: {:?}", sig);
+
+        signal.send(match sig {
+            Sig::HUP => Signal::Reload,
+            _ => Signal::Shutdown
+        });
+    });
+
+    signals
 }
 
 pub fn exit_with_error(msg: String, code: i32) -> ! {

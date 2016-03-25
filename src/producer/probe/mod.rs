@@ -1,5 +1,5 @@
 use std::slice::Iter;
-use std::thread::{spawn, JoinHandle};
+use std::thread::{self, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
@@ -8,7 +8,7 @@ use std::sync::mpsc::Receiver;
 use token_scheduler::{Scheduler, Abort, AbortableWait, AbortableWaitError, SteadyTimeSource};
 
 use sender::{Collect, Collector};
-use producer::ProducerEvent;
+use program::Signal;
 
 #[allow(dead_code)]
 pub enum RunMode {
@@ -121,8 +121,8 @@ impl ProbeScheduler {
 
 mod hello_world;
 
-pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandle<()> {
-    spawn(move || {
+pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> {
+    thread::spawn(move || {
         let mut ps = ProbeScheduler::new();
 
         let mut modules: Vec<Box<Module>> = vec![];
@@ -138,15 +138,15 @@ pub fn start(collector: Collector, events: Receiver<ProducerEvent>) -> JoinHandl
 
         let abort_handle = ps.abort_handle();
 
-        spawn(move || {
+        thread::spawn(move || {
             loop {
-                match events.recv().expect("master thread died") {
-                    ProducerEvent::Hello => debug!("hello received"),
-                    ProducerEvent::Shutdown => {
+                match signals.recv().expect("master thread died") {
+                    Signal::Shutdown => {
                         info!("Shutting down probe module: aborting scheduler");
                         abort_handle.abort();
                         return
                     }
+                    Signal::Reload => panic!("Reload is unsupported")
                 }
             }
         });
