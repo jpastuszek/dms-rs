@@ -1,6 +1,6 @@
 use std::process::exit;
 use std::sync::mpsc::{channel, Receiver};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use flexi_logger::{init as log_init, LogConfig, LogRecord};
 use time;
 use chan_signal::{notify, Signal as Sig};
@@ -35,13 +35,15 @@ pub fn init<S: Into<String>>(spec: Option<S>) -> Receiver<Signal> {
 
     let _ = thread::spawn(move || {
         debug!("Waiting for signals...");
-        let sig = chan_signals.recv().expect("chan_signal thread died");
-        info!("Process received OS signal: {:?}", sig);
+        loop {
+            let sig = chan_signals.recv().expect("chan_signal thread died");
+            info!("Process received OS signal: {:?}", sig);
 
-        signal.send(match sig {
-            Sig::HUP => Signal::Reload,
-            _ => Signal::Shutdown
-        });
+            signal.send(match sig {
+                Sig::HUP => Signal::Reload,
+                _ => Signal::Shutdown
+            }).ok();
+        }
     });
 
     signals

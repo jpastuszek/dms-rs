@@ -3,8 +3,8 @@ use std::thread::{self, JoinHandle};
 use std::rc::Rc;
 use std::fmt;
 use std::error::Error;
+use std::sync::mpsc::{channel, Receiver};
 use time::Duration;
-use std::sync::mpsc::Receiver;
 use token_scheduler::{Scheduler, Abort, AbortableWait, AbortableWaitError, SteadyTimeSource};
 
 use sender::{Collect, Collector};
@@ -137,16 +137,18 @@ pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> 
         //TODO: schedule modules
 
         let abort_handle = ps.abort_handle();
+        let (signal_forward, signals_forward) = channel();
 
         thread::spawn(move || {
             loop {
-                match signals.recv().expect("master thread died") {
-                    Signal::Shutdown => {
-                        info!("Shutting down probe module: aborting scheduler");
-                        abort_handle.abort();
-                        return
-                    }
-                    Signal::Reload => panic!("Reload is unsupported")
+                if signals.recv().ok().and_then(|signal| {
+                    debug!("Probe module: got signal {:?}", signal);
+                    signal_forward.send(signal).ok()
+                }).is_some() {
+                    abort_handle.abort()
+                } else {
+                    debug!("Stopping probe module signal handler");
+                    return
                 }
             }
         });
@@ -155,8 +157,13 @@ pub fn spawn(signals: Receiver<Signal>, collector: Collector) -> JoinHandle<()> 
             match ps.abortable_wait() {
                 Err(ProbeSchedulerError::Empty) => panic!("no probes configured to run"), //TODO: stop with nice msg
                 Err(ProbeSchedulerError::Aborted) => {
-                    info!("Probe module done");
-                    return
+                    match signals_forward.try_recv().expect("aborted byt no signal forwarded") {
+                        Signal::Shutdown => {
+                                info!("Probe module done");
+                                return
+                        }
+                        Signal::Reload => panic!("Reload is unsupported")
+                    }
                 }
                 Ok(probes) => {
                     let mut run_collector = collector.clone();

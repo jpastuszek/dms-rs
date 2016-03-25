@@ -36,27 +36,30 @@ use sender::Sender;
 
 fn dms_agent(signals: &Receiver<Signal>, processor_url: &Url) -> Result<(), (String, i32)> {
     //TODO: don't panic on wrong processor address + shutdown correctly
-    let sender = Sender::spawn(processor_url.to_owned()).unwrap();
+    let sender = Sender::start(processor_url.to_owned()).unwrap();
 
     let collector = sender.collector();
     let (producer_signal, producer_signals) = channel();
     let producer = producer::spawn(collector, producer_signals);
 
-    match signals.recv().unwrap() {
-        signal @ Signal::Shutdown => {
-            producer_signal.send(signal).expect("producer thread died");
-            //TODO: timeout?
-            producer.join().unwrap();
+    loop {
+        match signals.recv().expect("signal listener died") {
+            signal @ Signal::Shutdown => {
+                producer_signal.send(signal).expect("producer thread died");
+                //TODO: timeout?
+                producer.join().unwrap();
 
-            //TODO: gets stuck on sending
-            sender.stop();
+                //TODO: gets stuck on sending
+                sender.stop();
 
-            info!("Exiting cleanly");
+                info!("Exiting cleanly");
+                return Ok(());
+            }
+            signal @ Signal::Reload => {
+                producer_signal.send(signal).expect("producer thread died");
+            }
         }
-        Signal::Reload => panic!("Reload is unsupported yet")
     }
-
-    Ok(())
 }
 
 //TODO: update capnp

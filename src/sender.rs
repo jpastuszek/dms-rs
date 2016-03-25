@@ -61,7 +61,7 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub fn spawn(processor_url: Url) -> Result<Sender, SenderError> {
+    pub fn start(processor_url: Url) -> Result<Sender, SenderError> {
         //NOTE: when channel gets full producers will get stuck on sending and we won't be able to
         //shut down
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
