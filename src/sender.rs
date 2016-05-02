@@ -2,8 +2,10 @@ use std::sync::mpsc::sync_channel;
 use std::sync::mpsc::{Receiver, SyncSender};
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 use nanomsg::{Socket, Protocol, Error as NanoError};
+use nanomsg::endpoint::Endpoint;
 use url::Url;
 use chrono::{DateTime, UTC};
 
@@ -57,7 +59,8 @@ impl fmt::Display for SenderError {
 
 pub struct Sender {
     sink: SyncSender<Box<RawDataPoint>>,
-    thread: JoinHandle<()>
+    thread: JoinHandle<()>,
+    endpoint: Endpoint
 }
 
 impl Sender {
@@ -67,15 +70,18 @@ impl Sender {
         let (tx, rx): (SyncSender<Box<RawDataPoint>>, Receiver<Box<RawDataPoint>>) = sync_channel(1000);
 
         let mut socket = try!(Socket::new(Protocol::Push));
+        socket.set_linger(1).unwrap(); //TODO: configurable
+
         info!("Using processor URL: {}", &processor_url);
-        let mut _endpoint = try!(socket.connect(&processor_url.serialize()[..]));
+        let endpoint = try!(socket.connect(&processor_url.serialize()[..]));
 
         let thread = program::spawn("sender", move || {
             loop {
                 match rx.recv() {
                     Ok(raw_data_point) => {
-                        if let Err(err) = socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp) {
-                            error!("Failed to send raw data point to data processor at '{}': {}", &processor_url, err);
+                        match socket.send_message("".to_string(), *raw_data_point, Encoding::Capnp) {
+                            Err(messaging::MessagingError::<messaging::SendingDirection> { kind: IoError}) => return,
+                            Err(err) => error!("Failed to send raw data point to data processor at '{}': {}", &processor_url, err)
                         }
                     },
                     Err(error) => {
@@ -88,15 +94,20 @@ impl Sender {
 
         Ok(Sender {
             sink: tx,
-            thread: thread
+            thread: thread,
+            endpoint: endpoint
         })
     }
 
     pub fn stop(self) {
-        let Sender {sink, thread} = self;
+        let Sender {sink, thread, mut endpoint} = self;
         info!("Stopping sender...");
         //NOTE: all collectors needs to be dropped as well before thread will join
         drop(sink);
+        debug!("Shutting down nanomsg endpoint...");
+        //endpoint.shutdown().expect("sender endpoint shutdown");
+        Socket::terminate();
+        debug!("Joining sender thread...");
         thread.join().ok();
         info!("Sender done");
     }
